@@ -1,79 +1,86 @@
 import subprocess
-import os
 import time
-from pathlib import Path
+import os
+import sys
 
 # --- CONFIGURATION ---
-GITHUB_REPO = "walshderek/deadlygraphics"
-WSL_DISTRO_NAME = "Ubuntu-AI-V002"
-CONFIG_SCRIPT_NAME = "setup_config.sh"
+DISTRO_NAME = "Ubuntu"
+REPO_ROOT = "github.com/walshderek/deadlygraphics.git"
+# PATH TO TOKEN ON WINDOWS HOST
+# (Double backslashes needed for Python strings)
+TOKEN_FILE_PATH = r"C:\AI\github_token.txt"
 
-def run_powershell(command):
-    """Runs a command in Windows PowerShell and streams output."""
-    print(f"\n[HOST] Executing: {command}")
+def get_token_from_file():
+    """Reads the GitHub token from a local file on the Windows Host."""
+    if not os.path.exists(TOKEN_FILE_PATH):
+        print(f"\n[ERROR] Token file not found at: {TOKEN_FILE_PATH}")
+        print("Please create this file and paste your 'ghp_...' token inside it.")
+        return None
+    
     try:
-        process = subprocess.run(["powershell", "-Command", command],
-                                   capture_output=True,
-                                   text=True,
-                                   encoding='utf-8')
-        print(process.stdout)
-
-        # We only print errors if they aren't the expected 'distro not found' error
-        if process.returncode != 0 and "No installed distributions" not in process.stderr:
-            if "WSL_E_DISTRO_NOT_FOUND" not in process.stderr:
-                print(f"[ERROR] PowerShell failed (Code {process.returncode}): {process.stderr}")
-
+        with open(TOKEN_FILE_PATH, "r") as f:
+            token = f.read().strip()
+        if not token.startswith("ghp_"):
+            print(f"[WARNING] Token in {TOKEN_FILE_PATH} does not start with 'ghp_'. Proceeding anyway...")
+        return token
     except Exception as e:
-        print(f"[FATAL ERROR] Failed to run PowerShell command: {e}")
-        exit(1)
+        print(f"[ERROR] Could not read token file: {e}")
+        return None
 
 def main():
-    global USER_NAME, GITHUB_TOKEN
+    print(f"--- DEADLYGRAPHICS ORCHESTRATOR ({DISTRO_NAME}) ---")
+    print("OBJECTIVE: Full One-Shot Install of ComfyUI + Environment")
+    
+    # 1. Secure Token Retrieval
+    print(f"\n[Security] Reading credentials from {TOKEN_FILE_PATH}...")
+    token = get_token_from_file()
+    
+    if not token:
+        print("Aborting: No valid token found.")
+        input("Press Enter to exit...")
+        sys.exit(1)
+        
+    print("[Security] Token loaded successfully.")
 
-    print("--- 🚀 V002 WSL AI STARTER: Setup Orchestration ---")
+    # Construct the URL securely
+    repo_url_auth = f"https://{token}@{REPO_ROOT}"
 
-    # 1. User Input & Token Management
-    print("\n--- 1. User Input (Part 1/2) ---")
-    USER_NAME = input("Enter your desired Linux username (e.g., seanf): ")
-    if not USER_NAME:
-        print("Username cannot be empty. Exiting.")
-        exit(1)
-
-    GITHUB_TOKEN = input("Enter your GitHub Personal Access Token (for cloning/auth): ")
-    if not GITHUB_TOKEN:
-        print("Token cannot be empty. Exiting.")
-        exit(1)
-
-    # --- The Final Working Command Block (Printed first for safety) ---
-    final_setup_command = (
-        f'sudo apt update && sudo apt install git -y && '
-        f'git config --global credential.helper "/mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe" && '
-        f'git clone https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git /home/{USER_NAME}/deadlygraphics && '
-        f'cd /home/{USER_NAME}/deadlygraphics/config_files/ && '
-        f'./{CONFIG_SCRIPT_NAME}'
+    # The Proven "Golden Command"
+    guest_command = (
+        "sudo apt update && sudo apt install git -y && "
+        "git config --global credential.helper \"/mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe\" && "
+        f"git clone {repo_url_auth} ~/deadlygraphics && "
+        "cd ~/deadlygraphics/config_files/ && "
+        "chmod +x setup_config.sh && "
+        "./setup_config.sh && "
+        "source ai_env/bin/activate && "
+        "cd ComfyUI && "
+        "python main.py --listen"
     )
 
-    print("\n###################################################################################")
-    print(">>> PART 2: CONFIGURATION COMMAND <<<")
-    print("1. After setting the password, COPY and PASTE the following command EXACTLY:")
-    print("-----------------------------------------------------------------------------------")
-    print(f"{final_setup_command}")
-    print("-----------------------------------------------------------------------------------")
-    print("2. The script will now proceed with installation (Part 1/2).")
-    print("###################################################################################")
+    # 2. Install/Launch WSL
+    print(f"\n[Step 1] Installing/Launching {DISTRO_NAME}...")
+    subprocess.run(["wsl", "--install", "-d", DISTRO_NAME], check=False)
 
-    # 2. WSL Management & Installation
-    print("\n--- 2. WSL Termination & Installation (Part 1/2) ---")
-    run_powershell(f"wsl --terminate {WSL_DISTRO_NAME}")
-    run_powershell(f"wsl --unregister {WSL_DISTRO_NAME}")
+    # 3. The Mandatory Pause
+    print("\n" + "!"*60)
+    print("              CRITICAL INTERVENTION REQUIRED")
+    print("!"*60)
+    print("Microsoft forces a manual password setup for new Linux installs.")
+    print("1. A new window has opened.")
+    print("2. Enter username 'seanf' and your password.")
+    print("3. Wait for the green 'seanf@...' prompt in that window.")
+    print("!"*60)
+    
+    input("\nPress ENTER here once you have set your Linux password... ")
 
-    # Install the new distribution (Requires manual first-time login/password setup)
-    print(f"\n[HOST] Installing new distribution: {WSL_DISTRO_NAME}. YOU MUST SET THE PASSWORD NOW. The script will wait.")
-    subprocess.run(["wsl", "--install", "--distribution", "Ubuntu", "--name", WSL_DISTRO_NAME], check=True)
-
-    # 3. Final instructions for the user after the script loses control
-    print("\n✅ ORCHESTRATION COMPLETE. The terminal is now waiting for you to paste the command above.")
-
+    # 4. Handover
+    print(f"\n[Step 3] EXECUTE THE CONFIGURATION")
+    print("Paste the following command block into your new Ubuntu terminal:")
+    print("-" * 20 + " BEGIN BLOCK " + "-" * 20)
+    print(guest_command)
+    print("-" * 20 + " END BLOCK " + "-" * 20)
+    print("\nOnce executed, ComfyUI will launch automatically.")
 
 if __name__ == "__main__":
     main()
