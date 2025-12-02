@@ -31,6 +31,7 @@ pip install -r /home/${USER}/deadlygraphics/config_files/requirements.txt
 
 # --- 6. Clone Application ---
 echo "6/8: Cloning ComfyUI..."
+rm -rf ComfyUI || true
 git clone https://github.com/comfyanonymous/ComfyUI.git
 
 # --- 7. Model Symlink ---
