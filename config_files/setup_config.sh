@@ -6,39 +6,46 @@ WORKSPACE_ROOT="$HOME/workspace/deadlygraphics/ai/apps"
 VENV_PATH="$WORKSPACE_ROOT/ai_env"
 COMFY_PATH="$WORKSPACE_ROOT/ComfyUI"
 
-echo "1/7: Installing System Dependencies..."
-sudo apt update && sudo apt install -y python3-venv git build-essential
+echo "1/8: Installing System Dependencies..."
+# CRITICAL FIX: Added python3-pip so venv creation actually includes pip
+sudo apt update && sudo apt install -y python3-venv python3-pip git build-essential
 
-echo "2/7: creating Workspace & Virtual Environment..."
+echo "2/8: Creating Workspace & Virtual Environment..."
 mkdir -p "$WORKSPACE_ROOT"
 cd "$WORKSPACE_ROOT"
 
-if [ ! -d "$VENV_PATH" ]; then
-    python3 -m venv "$VENV_PATH"
+# Re-create venv if it exists to ensure pip is there
+if [ -d "$VENV_PATH" ]; then
+    echo "Reseting venv to ensure clean pip install..."
+    rm -rf "$VENV_PATH"
 fi
+python3 -m venv "$VENV_PATH"
 source "$VENV_PATH/bin/activate"
 
-echo "3/7: Installing PyTorch & Drivers..."
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Double-check pip is alive
+python -m ensurepip --upgrade
+python -m pip install --upgrade pip
 
-echo "4/7: Installing Requirements..."
-# We go back to the repo config folder to find requirements.txt
+echo "3/8: Installing PyTorch & Drivers..."
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+echo "4/8: Installing Requirements..."
 if [ -f "$HOME/deadlygraphics/config_files/requirements.txt" ]; then
-    pip install -r "$HOME/deadlygraphics/config_files/requirements.txt"
+    python -m pip install -r "$HOME/deadlygraphics/config_files/requirements.txt"
 else
     echo "requirements.txt not found, skipping."
 fi
 
-echo "5/7: Cloning ComfyUI..."
+echo "5/8: Cloning ComfyUI..."
 if [ -d "$COMFY_PATH" ]; then
     echo "ComfyUI already exists. Skipping clone."
 else
     git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFY_PATH"
 fi
 
-echo "6/7: Linking Models (C:\AI\models -> ComfyUI)..."
+echo "6/8: Linking Models (C:\AI\models -> ComfyUI)..."
 rm -rf "$COMFY_PATH/models"
 ln -s /mnt/c/AI/models "$COMFY_PATH/models"
 
-echo "7/7: Setup Complete."
+echo "7/8: Setup Complete."
 echo "Launch with: cd $COMFY_PATH && python main.py --listen"
