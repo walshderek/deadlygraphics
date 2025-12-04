@@ -1,6 +1,6 @@
 # Script Name: DG_collect_dataset.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: AI Dataset Factory. Bing Scraper + LLM Captioning + Google Sheets Logging.
+# Description: AI Dataset Factory. Bing Scraper + LLM Captioning + Google Sheets.
 
 import sys
 import os
@@ -24,7 +24,6 @@ DEFAULT_SEARCH_TERM = "portrait photo"
 TRIGGER_WORD = "ohwx"
 MAX_IMAGES = 50
 MAX_WORKERS = 5
-SHEET_NAME = "DeadlyGraphics LoRA Tracker" 
 
 if os.name == 'nt':
     WIN_MODEL_PATH = r"C:\ai\models\LLM"
@@ -33,13 +32,15 @@ else:
     WSL_MODEL_PATH = "/mnt/c/ai/models/LLM"
     GOOGLE_CREDENTIALS_PATH = "/mnt/c/AI/apps/ComfyUI Desktop/custom_nodes/comfyui-google-sheets-integration/client_secret.json"
 
+SHEET_NAME = "DeadlyGraphics LoRA Tracker" 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
 def log(msg):
     print(f"--> {msg}")
 
 def get_model_dir():
-    return WSL_MODEL_PATH if os.name != 'nt' else WIN_MODEL_PATH
+    if os.name != 'nt': return WSL_MODEL_PATH
+    return WIN_MODEL_PATH
 
 # --- Dependency Management ---
 def check_and_install_dependencies():
@@ -113,46 +114,31 @@ def log_to_google_sheet(project_name, trigger_word, image_count, model_used):
     except Exception as e:
         log(f"❌ Logging Failed: {e}")
 
-# --- Logic ---
-def determine_output_dir(search_term):
-    folder_name = re.sub(r'[\\/*?:"<>|]', "", search_term).replace(" ", "_")
-    windows_drive = f"/mnt/h/My Drive/AI/Datasets/{folder_name}"
-    if os.path.exists("/mnt/h"):
-        try: os.makedirs(windows_drive, exist_ok=True); return windows_drive
-        except: pass
-    local_dir = f"datasets/{folder_name}"
-    os.makedirs(local_dir, exist_ok=True); return local_dir
-
-def fetch_bing_images(query, limit):
-    log(f"Searching Bing: '{query}'")
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    url = f"https://www.bing.com/images/async?q={query}&first=0&count={limit}&adlt=off"
+# --- Image Processing ---
+def process_image(image_path):
     try:
-        r = requests.get(url, headers=headers)
-        return re.findall(r'murl&quot;:&quot;(.*?)&quot;', r.text)[:limit]
-    except: return []
-
-def download_worker(url, output_dir, index):
-    try:
-        r = requests.get(url, timeout=10)
-        if r.status_code != 200: return None
         from PIL import Image
-        img = Image.open(BytesIO(r.content)).convert("RGB")
+        img = Image.open(image_path)
+        if img.mode in ("RGBA", "P"): img = img.convert("RGB")
         
-        # Resize to 1024
-        ratio = max(1024/img.width, 1024/img.height)
-        new_size = (int(img.width*ratio), int(img.height*ratio))
+        target_size = 1024
+        ratio = max(target_size / img.size[0], target_size / img.size[1])
+        new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
         img = img.resize(new_size, Image.LANCZOS)
         
-        # Center Crop
-        left = (new_size[0] - 1024)/2; top = (new_size[1] - 1024)/2
-        img = img.crop((left, top, left+1024, top+1024))
+        left = (new_size[0] - target_size) / 2
+        top = (new_size[1] - target_size) / 2
+        right = (new_size[0] + target_size) / 2
+        bottom = (new_size[1] + target_size) / 2
+        
+        img = img.crop((left, top, right, bottom))
+        img.save(image_path, "JPEG", quality=95)
+        return True
+    except Exception as e:
+        log(f"Image processing failed: {e}")
+        return False
 
-        path = os.path.join(output_dir, f"img_{index:04d}.jpg")
-        img.save(path, "JPEG", quality=95)
-        return path
-    except: return None
-
+# --- LLM Captioning ---
 def load_llm(model_type):
     from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor
     model_dir = get_model_dir()
@@ -190,7 +176,6 @@ def generate_caption(image_path, model, processor, model_type, style, trigger):
             enc_image = model.encode_image(image)
             caption = model.answer_question(enc_image, prompt, tokenizer=processor)
         elif model_type == "qwen":
-            # Simplified Qwen Inference
             messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
             text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = processor(text=[text], images=[image], padding=True, return_tensors="pt").to("cuda")
@@ -200,6 +185,45 @@ def generate_caption(image_path, model, processor, model_type, style, trigger):
 
         return caption.strip()
     except: return f"{trigger}, caption failed"
+
+# --- Logic ---
+def determine_output_dir(search_term):
+    folder_name = re.sub(r'[\\/*?:"<>|]', "", search_term).replace(" ", "_")
+    windows_drive = f"/mnt/h/My Drive/AI/Datasets/{folder_name}"
+    if os.path.exists("/mnt/h"):
+        try: os.makedirs(windows_drive, exist_ok=True); return windows_drive
+        except: pass
+    local_dir = f"datasets/{folder_name}"
+    os.makedirs(local_dir, exist_ok=True); return local_dir
+
+def fetch_bing_images(query, limit):
+    log(f"Searching Bing: '{query}'")
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    url = f"https://www.bing.com/images/async?q={query}&first=0&count={limit}&adlt=off"
+    try:
+        r = requests.get(url, headers=headers)
+        return re.findall(r'murl&quot;:&quot;(.*?)&quot;', r.text)[:limit]
+    except: return []
+
+def download_worker(url, output_dir, index):
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200: return None
+        from PIL import Image
+        img = Image.open(BytesIO(r.content)).convert("RGB")
+        
+        # Resize & Crop
+        target = 1024
+        ratio = max(target/img.width, target/img.height)
+        new_size = (int(img.width*ratio), int(img.height*ratio))
+        img = img.resize(new_size, Image.LANCZOS)
+        left = (new_size[0] - target)/2; top = (new_size[1] - target)/2
+        img = img.crop((left, top, left+target, top+target))
+
+        path = os.path.join(output_dir, f"img_{index:04d}.jpg")
+        img.save(path, "JPEG", quality=95)
+        return path
+    except: return None
 
 def main():
     check_and_install_dependencies()
@@ -227,20 +251,33 @@ def main():
     output_dir = determine_output_dir(args.search_term)
     downloaded_files = []
 
+    # STEP 1: DOWNLOAD
     if 1 in steps_to_run:
         log(f"Output: {output_dir}")
+        
+        # FIX: Only scrape if we are in step 1. Ignore text file if scraping.
         urls = fetch_bing_images(args.search_term, args.count)
+        
+        # Fallback to checklist if search returned nothing AND user didn't provide a search term override
+        if not urls and args.search_term == DEFAULT_SEARCH_TERM:
+             if os.path.exists("dataset_checklist.txt"):
+                 with open("dataset_checklist.txt") as f:
+                     urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        
         if not urls: log("No images found."); sys.exit(1)
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
             futures = [ex.submit(download_worker, u, output_dir, i) for i, u in enumerate(urls)]
             for f in concurrent.futures.as_completed(futures):
                 if f.result(): downloaded_files.append(f.result())
         log(f"Downloaded {len(downloaded_files)} images.")
     else:
+        # If skipping download, find existing files
         if os.path.exists(output_dir):
              downloaded_files = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.endswith(".jpg")]
 
-    if 3 in steps_to_run and downloaded_files:
+    # STEP 3: CAPTION
+    if 3 in steps_to_run and not args.skip_caption and downloaded_files:
         log(f"Initializing {args.model}...")
         model, processor, m_type = load_llm(args.model)
         if model:
@@ -249,6 +286,7 @@ def main():
                 with open(os.path.splitext(img_path)[0] + ".txt", "w", encoding="utf-8") as f: f.write(cap)
                 log(f"Captioned: {os.path.basename(img_path)}")
 
+    # STEP 6: LOG
     if 6 in steps_to_run:
         log_to_google_sheet(args.search_term, args.trigger, len(downloaded_files), args.model)
 
