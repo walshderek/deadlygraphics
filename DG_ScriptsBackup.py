@@ -93,43 +93,43 @@ def pull_mode(args, creds):
     log("STARTING PULL: GitHub -> WSL...", "INFO")
     
     script_name = args.file_path if args.file_path else DEFAULT_SCRIPT
-    # Ensure no path separators, just the name
     script_name = os.path.basename(script_name)
     
-    app_folder = os.path.splitext(script_name)[0]
-    
-    # Target: ~/workspace/deadlygraphics/ai/apps/DG_videoscraper
-    # NOTE: We clone the WHOLE repo to ~/workspace/deadlygraphics
-    # Then we run from there.
-    
+    # --- PATH LOGIC ---
     wsl_user = creds["deadlygraphics"]["wsl_user"]
     repo_name = creds["deadlygraphics"]["repo_name"]
+    workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
+    
+    # Smart Destination:
+    # If it's this manager script -> go to 'ai/scripts'
+    # If it's anything else (videoscraper) -> go to 'ai/apps/Name'
+    if "DG_ScriptsBackup" in script_name:
+        dest_folder = os.path.join(workspace_root, "ai", "scripts")
+        is_app = False
+    else:
+        app_folder = os.path.splitext(script_name)[0]
+        dest_folder = os.path.join(workspace_root, "ai", "apps", app_folder)
+        is_app = True
+
+    log(f"Destination: {dest_folder}", "INFO")
+
+    # 1. Update Repo
     gh_user = creds["github"]["user"]
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
     
-    workspace_dir = os.path.expanduser(f"~/workspace/{repo_name}")
-    
-    if not os.path.exists(workspace_dir):
-        os.makedirs(workspace_dir, exist_ok=True)
+    if not os.path.exists(workspace_root):
+        os.makedirs(workspace_root, exist_ok=True)
         run_command(f'git clone "{repo_url}" .', cwd=workspace_dir)
     else:
-        # Check if git initialized
-        if not os.path.exists(os.path.join(workspace_dir, ".git")):
-             run_command(f'git clone "{repo_url}" .', cwd=workspace_dir)
+        if not os.path.exists(os.path.join(workspace_root, ".git")):
+             run_command(f'git clone "{repo_url}" .', cwd=workspace_root)
         else:
-             run_command('git pull', cwd=workspace_dir)
+             run_command('git pull', cwd=workspace_root)
 
-    # Determine script location inside repo
-    # You didn't specify structure in repo, assuming root? 
-    # Or assuming script pushed to root of repo.
-    # We copy it to specific app folder structure
-    
-    app_dir = os.path.join(workspace_dir, "ai", "apps", app_folder)
-    os.makedirs(app_dir, exist_ok=True)
-    
-    # Move/Copy script from Repo Root to App Folder
-    src = os.path.join(workspace_dir, script_name)
-    dst = os.path.join(app_dir, script_name)
+    # 2. Copy file from Repo Root to Destination
+    os.makedirs(dest_folder, exist_ok=True)
+    src = os.path.join(workspace_root, script_name)
+    dst = os.path.join(dest_folder, script_name)
     
     if os.path.exists(src):
         shutil.copy2(src, dst)
@@ -139,24 +139,25 @@ def pull_mode(args, creds):
         log(f"Script {script_name} not found in repo root.", "FAIL")
         sys.exit(1)
 
-    # Dependencies
-    log("Checking Dependencies...", "INFO")
-    
-    # Simple venv setup
-    venv_dir = os.path.join(app_dir, "venv")
-    if not os.path.exists(venv_dir):
-        # We assume sudo passwordless or user presence for apt
-        # If this fails, user must run manual install.
-        try:
-            run_command(f"{sys.executable} -m venv venv", cwd=app_dir)
-        except:
-            log("Venv creation failed. Try: sudo apt install python3-venv", "WARN")
+    # 3. Setup Dependencies (ONLY for Apps)
+    # Utility scripts don't get their own venv usually
+    if is_app:
+        log("Checking App Dependencies...", "INFO")
+        venv_dir = os.path.join(dest_folder, "venv")
+        
+        # Venv creation
+        if not os.path.exists(venv_dir):
+            try:
+                run_command(f"{sys.executable} -m venv venv", cwd=dest_folder)
+            except:
+                log("Venv failed. Try: sudo apt install python3-venv", "WARN")
 
-    # Install Requirements
-    pip = os.path.join(venv_dir, "bin", "pip")
-    if os.path.exists(pip):
-        run_command(f'"{pip}" install --quiet --upgrade pip')
-        run_command(f'"{pip}" install --quiet yt-dlp tqdm requests beautifulsoup4 selenium undetected-chromedriver selenium-wire')
+        # Pip Install
+        pip = os.path.join(venv_dir, "bin", "pip")
+        if os.path.exists(pip):
+            run_command(f'"{pip}" install --quiet --upgrade pip')
+            # Standard dependencies
+            run_command(f'"{pip}" install --quiet yt-dlp tqdm requests beautifulsoup4 selenium undetected-chromedriver selenium-wire')
     
     log("WSL Update Complete!", "SUCCESS")
 
