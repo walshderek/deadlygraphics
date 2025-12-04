@@ -1,6 +1,6 @@
 # Script Name: DG_ScriptsBackup.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Cross-platform manager. Windows pushes. Linux pulls/installs with app isolation.
+# Description: Cross-platform manager. Windows pushes. Linux pulls. Handles Sudo interactively if needed.
 
 import os
 import sys
@@ -63,7 +63,6 @@ def push_mode(args, creds):
     if not source_path.exists():
         log(f"File not found: {source_path}", "FAIL"); sys.exit(1)
 
-    # Git Operations
     url = get_remote_url(creds)
     if not repo_path.exists():
         run_command(f'git clone "{url}" "{repo_path}"')
@@ -85,48 +84,56 @@ def push_mode(args, creds):
     else:
         log("No changes to push.", "WARN")
 
-# --- LINUX: PULL & INSTALL APP ---
+# --- LINUX: PULL FROM GITHUB ---
 def pull_mode(args, creds):
+    if IS_WINDOWS:
+        log("Pull mode is for Linux/WSL only.", "FAIL"); sys.exit(1)
+
     log("STARTING PULL: GitHub -> Linux...", "INFO")
     
     wsl_user = creds["deadlygraphics"]["wsl_user"]
-    wsl_pass = creds["deadlygraphics"].get("wsl_password", "")
+    wsl_pass = creds["deadlygraphics"].get("wsl_password", "").strip()
     
     script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
-    app_folder_name = os.path.splitext(script_name)[0]
     
     # Paths
     repo_name = creds["deadlygraphics"]["repo_name"]
     workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
     
-    # Destination logic
     if "DG_ScriptsBackup" in script_name:
         dest_folder = os.path.join(workspace_root, "ai", "scripts")
         is_app = False
     else:
-        dest_folder = os.path.join(workspace_root, "ai", "apps", app_folder_name)
+        app_folder = os.path.splitext(script_name)[0]
+        dest_folder = os.path.join(workspace_root, "ai", "apps", app_folder)
         is_app = True
 
     gh_user = creds["github"]["user"]
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
-    # Bash Script: Handles Pulling, Isolating, Venv, and Shortcutting
-    # Note: using raw strings r""" to prevent escape warnings
+    # --- SMART SUDO LOGIC ---
+    # If password exists in JSON, use it. If not, simply use 'sudo' (interactive).
+    if wsl_pass:
+        SUDO_CMD = f"echo '{wsl_pass}' | sudo -S"
+    else:
+        SUDO_CMD = "sudo"
+
+    # Bash Script
+    # Use raw string r""" to prevent syntax warnings about escape characters
     bash_content = r"""#!/bin/bash
 set -e
 """ + f"""
 REPO_DIR="{workspace_root}"
 DEST_DIR="{dest_folder}"
 SCRIPT_NAME="{script_name}"
-APP_NAME="{app_folder_name}"
-SUDO_PASS="{wsl_pass}"
+SUDO_CMD="{SUDO_CMD}"
 IS_APP="{str(is_app).lower()}"
 
 echo "--> Target Repo: $REPO_DIR"
 
-# 1. Update Master Repo
+# 1. Update Repo
 if [ ! -d "$REPO_DIR" ]; then
-    echo "--> Cloning master repo..."
+    echo "--> Cloning repo..."
     mkdir -p "$REPO_DIR"
     git clone "{repo_url}" "$REPO_DIR"
 else
@@ -135,13 +142,13 @@ else
         mv "$REPO_DIR" "$REPO_DIR_BACKUP_$(date +%s)"
         git clone "{repo_url}" "$REPO_DIR"
     else
-        echo "--> Pulling latest code..."
+        echo "--> Pulling latest..."
         cd "$REPO_DIR"
         git pull
     fi
 fi
 
-# 2. App Isolation (Copy from Repo to App Folder)
+# 2. File Install & Backup
 mkdir -p "$DEST_DIR"
 SRC="$REPO_DIR/$SCRIPT_NAME"
 DST="$DEST_DIR/$SCRIPT_NAME"
@@ -159,7 +166,7 @@ else
     exit 1
 fi
 
-# 3. Checklist & Configs
+# 3. Config Generation
 if [[ "$SCRIPT_NAME" == *"scraper"* ]]; then
     CHECKLIST="$DEST_DIR/scrapervideo_checklist.txt"
     if [ ! -f "$CHECKLIST" ]; then
@@ -168,48 +175,41 @@ if [[ "$SCRIPT_NAME" == *"scraper"* ]]; then
     fi
 fi
 
-# 4. Dedicated VENV Setup (Apps Only)
+# 4. Dependencies (Apps Only)
 if [[ "$IS_APP" == "true" ]]; then
     cd "$DEST_DIR"
     
-    # Ensure System Deps exist
-    echo "$SUDO_PASS" | sudo -S apt-get update > /dev/null
-    echo "$SUDO_PASS" | sudo -S apt-get install -y python3 python3-pip python3-venv unzip wget > /dev/null
+    # 1. System Deps & Opera
+    # We evaluate the SUDO_CMD string to run the command
+    eval "$SUDO_CMD apt-get update > /dev/null"
+    eval "$SUDO_CMD apt-get install -y python3 python3-pip python3-venv unzip wget > /dev/null"
+    
+    if ! command -v opera &> /dev/null; then
+        echo "--> Installing Opera..."
+        eval "wget -q -O - https://deb.opera.com/archive.key | $SUDO_CMD apt-key add -"
+        eval "$SUDO_CMD sh -c 'echo \"deb https://deb.opera.com/opera-stable/ stable non-free\" > /etc/apt/sources.list.d/opera-stable.list'"
+        eval "$SUDO_CMD apt-get update > /dev/null"
+        eval "$SUDO_CMD apt-get install -y opera-stable > /dev/null"
+    fi
 
-    # Create isolated VENV for this app
+    # 2. Venv & Pip
     if [ ! -d "venv" ]; then
-        echo "--> Creating dedicated venv for $APP_NAME..."
         python3 -m venv venv
     fi
     
     source venv/bin/activate
-    echo "--> Pre-loading base dependencies..."
+    echo "--> Installing Python Libs..."
+    # CRITICAL: blinker<1.8.0 for stability
     pip install --quiet --upgrade pip
-    pip install --quiet setuptools wheel
-    
-    # 5. Create Global Shortcut / Launcher
-    LAUNCHER_PATH="/usr/local/bin/$APP_NAME"
-    
-    echo "--> Creating global launcher: $APP_NAME"
-    
-    cat <<EOF > /tmp/$APP_NAME.launcher
-#!/bin/bash
-cd "$DEST_DIR"
-source venv/bin/activate
-python3 $SCRIPT_NAME "\$@"
-EOF
-    
-    chmod +x /tmp/$APP_NAME.launcher
-    echo "$SUDO_PASS" | sudo -S mv /tmp/$APP_NAME.launcher "$LAUNCHER_PATH"
-    echo "$SUDO_PASS" | sudo -S chmod +x "$LAUNCHER_PATH"
-    
-    echo "✅ Shortcut created! You can now run '$APP_NAME' from anywhere."
+    pip install --quiet setuptools "blinker<1.8.0" webdriver-manager yt-dlp tqdm requests beautifulsoup4 selenium selenium-wire undetected-chromedriver
 fi
+
+echo "--> DONE! Run with: ./venv/bin/python $SCRIPT_NAME"
 """
 
-    # --- EXECUTION LOGIC ---
+    # --- EXECUTION ---
     if IS_WINDOWS:
-        # Windows: Use Bridge File
+        # Windows Bridge
         temp_script_win = r"C:\dg_pull.sh"
         temp_script_wsl = "/mnt/c/dg_pull.sh"
         
@@ -217,23 +217,23 @@ fi
             with open(temp_script_win, "w", newline="\n", encoding="utf-8") as f:
                 f.write(bash_content)
             
-            # Tell WSL to run it
             cmd = ["wsl", "-u", wsl_user, "--cd", "~", "bash", temp_script_wsl]
             subprocess.run(cmd, check=True)
             log("WSL Update Successful", "SUCCESS")
+            
         except Exception as e:
-            log(f"WSL Install Failed: {e}", "FAIL")
+            log(f"WSL Update Failed: {e}", "FAIL")
         finally:
             if os.path.exists(temp_script_win):
                 os.remove(temp_script_win)
     else:
-        # Linux: Run Directly
+        # Linux Native
         temp_script = f"/tmp/dg_install_{script_name}.sh"
         try:
             with open(temp_script, "w") as f:
                 f.write(bash_content)
             
-            # Run natively with bash
+            # Run natively. If password missing, this will prompt user in terminal.
             subprocess.run(["bash", temp_script], check=True)
             log("Update Successful", "SUCCESS")
         except Exception as e:
