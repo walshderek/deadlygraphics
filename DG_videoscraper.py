@@ -1,6 +1,6 @@
 # Script Name: DG_videoscraper.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Smart video downloader. Uses GH Token to prevent rate limits.
+# Description: Smart video downloader. 3-Tier fallback with title extraction.
 
 import sys
 import os
@@ -18,12 +18,6 @@ import json
 # --- Configuration ---
 DEFAULT_CHECKLIST = "scrapervideo_checklist.txt"
 
-# Path Logic
-if os.name == 'nt':
-    CREDENTIALS_FILE = r"C:\credentials\credentials.json"
-else:
-    CREDENTIALS_FILE = "/mnt/c/credentials/credentials.json"
-
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
 def log(msg):
@@ -33,18 +27,6 @@ def get_os_type():
     if platform.system() == "Windows": return "WIN"
     if "microsoft" in platform.uname().release.lower(): return "WSL"
     return "LINUX"
-
-# --- Credentials ---
-def load_github_token():
-    """Loads GH Token to unblock WebDriver Manager rate limits."""
-    if not os.path.exists(CREDENTIALS_FILE):
-        return None
-    try:
-        with open(CREDENTIALS_FILE, 'r') as f:
-            data = json.load(f)
-            return data.get("github", {}).get("token", "")
-    except:
-        return None
 
 # --- Dependency Management ---
 def check_and_install_dependencies():
@@ -90,7 +72,6 @@ def attempt_api_direct(url, output_dir):
     import requests
     from tqdm import tqdm
     
-    # 1. Direct Link Check
     if re.search(r'\.(mp4|m3u8|webm)(\?.*)?$', url):
         log(f"[Tier 1] Direct media link detected.")
         return download_file(url, output_dir, referer=url)
@@ -104,7 +85,7 @@ def attempt_chrome_sniff(url):
     
     if not check_browser_installed("chrome"):
         log("[Tier 2] Chrome not found. Skipping.")
-        return None, None
+        return None, None, None
 
     log(f"[Tier 2] Sniffing with Chrome: {url}")
     driver = None
@@ -119,7 +100,7 @@ def attempt_chrome_sniff(url):
         return run_vdh_logic(driver, url)
     except Exception as e:
         log(f"[Tier 2] Chrome Failed: {e}")
-        return None, None
+        return None, None, None
     finally:
         if driver: driver.quit()
 
@@ -134,14 +115,13 @@ def attempt_opera_sniff(url):
     
     if not check_browser_installed("opera"):
         log("[Tier 3] Opera not found. Skipping.")
-        return None, None
+        return None, None, None
 
     log(f"[Tier 3] Sniffing with Opera: {url}")
     
-    # AUTH INJECTION: Fixes the API Rate Limit Error
+    # AUTH INJECTION for Rate Limits
     token = load_github_token()
-    if token:
-        os.environ['GH_TOKEN'] = token
+    if token: os.environ['GH_TOKEN'] = token
 
     driver = None
     try:
@@ -164,7 +144,7 @@ def attempt_opera_sniff(url):
         return run_vdh_logic(driver, url)
     except Exception as e:
         log(f"[Tier 3] Opera Failed: {e}")
-        return None, None
+        return None, None, None
     finally:
         if driver: driver.quit()
 
@@ -179,6 +159,12 @@ def run_vdh_logic(driver, url):
     driver.scopes = [r'.*\.m3u8.*', r'.*\.mp4.*', r'.*\.webm.*']
     driver.get(url)
     time.sleep(5)
+    
+    # Extract Title for cleaner filename
+    page_title = driver.title
+    clean_title = re.sub(r'[\\/*?:"<>|]', "", page_title).strip()
+    if not clean_title: clean_title = "video"
+    log(f"Page Title: {clean_title}")
     
     def click_play(d, depth=0):
         if depth > 4: return False
@@ -201,7 +187,7 @@ def run_vdh_logic(driver, url):
         return False
 
     if not click_play(driver):
-        log("No play button found (autoplay?)")
+        log("No play button found")
         
     log("Waiting 15s for streams...")
     time.sleep(15)
@@ -209,26 +195,26 @@ def run_vdh_logic(driver, url):
     best_stream = None
     max_size = 0
     
-    # Filter for LARGEST stream (ignore ads)
     for req in reversed(driver.requests):
         if req.response and any(ext in req.url for ext in ['.m3u8', '.mp4', '.webm']):
             content_len = int(req.response.headers.get('Content-Length', 0))
             
             if '.m3u8' in req.url:
                 log(f"✅ Found HLS Stream: {req.url[:60]}...")
-                return req.url, save_cookies_safe(driver)
+                cookies = save_cookies_safe(driver)
+                return req.url, cookies, clean_title
             
             file_size_mb = content_len / (1024 * 1024)
             if file_size_mb > max_size:
                 max_size = file_size_mb
                 best_stream = req.url
     
-    # Threshold: 10MB to skip ads
-    if best_stream and max_size > 10:
-        log(f"✅ Found Largest Stream ({max_size:.2f} MB): {best_stream[:60]}...")
-        return best_stream, save_cookies_safe(driver)
+    if best_stream and max_size > 5: # Threshold 5MB
+        log(f"✅ Found Stream ({max_size:.2f} MB): {best_stream[:60]}...")
+        cookies = save_cookies_safe(driver)
+        return best_stream, cookies, clean_title
             
-    return None, None
+    return None, None, None
 
 def save_cookies_safe(driver):
     try:
@@ -248,13 +234,14 @@ def save_cookies_safe(driver):
         return tf.name
     except: return None
 
-def download_file(url, output_dir, cookie_file=None, referer=None, force_fresh=False):
+def download_file(url, output_dir, cookie_file=None, referer=None, title=None):
     import yt_dlp
     
-    # Get cleaner filename if possible
-    clean_name = "%(title)s.%(ext)s"
+    # Construct safe filename
+    if not title: title = "video"
+    safe_name = f"{title}.%(ext)s"
     
-    # Special headers
+    # Headers
     headers = {'Referer': referer} if referer else {}
     if "noodlemagazine" in (referer or ""):
         headers = {
@@ -264,16 +251,16 @@ def download_file(url, output_dir, cookie_file=None, referer=None, force_fresh=F
         }
 
     opts = {
-        'outtmpl': os.path.join(output_dir, clean_name),
+        'outtmpl': os.path.join(output_dir, safe_name),
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'noplaylist': True,
-        'quiet': False, # Loud logs
+        'quiet': False,
         'no_warnings': False,
-        'http_headers': headers,
-        'no_overwrites': not force_fresh,
+        'http_headers': headers
     }
     if cookie_file: opts['cookiefile'] = cookie_file
     
+    log(f"Downloading to: {os.path.join(output_dir, title)}")
     try:
         with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
         return True
@@ -282,7 +269,6 @@ def download_file(url, output_dir, cookie_file=None, referer=None, force_fresh=F
         return False
 
 def determine_output_dir():
-    # Try Windows Drive first
     windows_drive = "/mnt/h/My Drive/AI/Downloads"
     if os.path.exists("/mnt/h"):
         if not os.path.exists(windows_drive):
@@ -290,6 +276,15 @@ def determine_output_dir():
             except: return "downloads"
         return windows_drive
     return "downloads"
+
+def load_github_token():
+    if os.name == 'nt': cred_file = r"C:\credentials\credentials.json"
+    else: cred_file = "/mnt/c/credentials/credentials.json"
+    
+    if not os.path.exists(cred_file): return None
+    try:
+        with open(cred_file, 'r') as f: return json.load(f).get("github", {}).get("token", "")
+    except: return None
 
 def main():
     check_and_install_dependencies()
@@ -312,15 +307,15 @@ def main():
         
         if attempt_api_direct(url, output_dir): continue
         
-        stream_url, cookies = attempt_chrome_sniff(url)
+        stream_url, cookies, title = attempt_chrome_sniff(url)
         if stream_url:
-            download_file(stream_url, output_dir, cookies, referer=url)
+            download_file(stream_url, output_dir, cookies, referer=url, title=title)
             if cookies: os.remove(cookies)
             continue
             
-        stream_url, cookies = attempt_opera_sniff(url)
+        stream_url, cookies, title = attempt_opera_sniff(url)
         if stream_url:
-            download_file(stream_url, output_dir, cookies, referer=url)
+            download_file(stream_url, output_dir, cookies, referer=url, title=title)
             if cookies: os.remove(cookies)
             continue
             
