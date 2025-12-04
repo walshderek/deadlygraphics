@@ -1,97 +1,291 @@
+# Script Name: DG_collect_dataset.py
+# Authors: DeadlyGraphics, Gemini, ChatGPT
+# Description: AI Dataset Factory. Scrapes -> Crops -> Captions (Qwen/Moondream) -> Prepares for LoRA.
+
 import sys
+import os
+import subprocess
+import time
+import shutil
+import logging
 import argparse
-import importlib
-from pathlib import Path
+import concurrent.futures
+import requests
+import re
+import platform
+import json
+from urllib.parse import urlparse, unquote
+from io import BytesIO
 
-# --- 1. PATH SETUP ---
-# Add 'core' to Python's search path so we can find 'utils.py' and the modules
-CORE_DIR = Path(__file__).parent / "core"
-sys.path.append(str(CORE_DIR))
+# --- Configuration ---
+DEFAULT_SEARCH_TERM = "portrait photo"
+TRIGGER_WORD = "ohwx" # Default trigger word for CrinklyPaper style
+MAX_IMAGES = 50
+MAX_WORKERS = 5
 
-# --- 2. IMPORT UTILS & BOOTSTRAP ---
-try:
-    import utils # Now matches core/utils.py
-except ImportError as e:
-    print(f"❌ CRITICAL ERROR: Could not import core/utils.py")
-    print(f"Details: {e}")
-    sys.exit(1)
+# LLM Paths (Cross-Platform)
+WIN_MODEL_PATH = r"C:\ai\models\LLM"
+WSL_MODEL_PATH = "/mnt/c/ai/models/LLM"
 
-# Auto-activate VENV and install requirements if needed
-utils.bootstrap(install_reqs=True)
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
-# --- 3. DYNAMIC MODULE LOADING ---
-# We use importlib because filenames start with numbers (01_...)
-def load_core_module(module_name):
+def log(msg):
+    print(f"--> {msg}")
+
+def get_os_type():
+    if platform.system() == "Windows": return "WIN"
+    if "microsoft" in platform.uname().release.lower(): return "WSL"
+    return "LINUX"
+
+def get_model_dir():
+    if get_os_type() == "WSL":
+        return WSL_MODEL_PATH
+    return WIN_MODEL_PATH
+
+# --- Dependency Management ---
+def check_and_install_dependencies():
+    # Added: opencv, torch, transformers, einops for LLMs
+    required = [
+        'requests', 'tqdm', 'beautifulsoup4', 'Pillow', 
+        'opencv-python-headless', 'torch', 'transformers', 
+        'einops', 'accelerate', 'qwen_vl_utils'
+    ]
+    
+    missing = []
+    for pkg in required:
+        try:
+            import_name = pkg
+            if pkg == 'beautifulsoup4': import_name = 'bs4'
+            if pkg == 'Pillow': import_name = 'PIL'
+            if pkg == 'opencv-python-headless': import_name = 'cv2'
+            if pkg == 'qwen_vl_utils': import_name = 'qwen_vl_utils'
+            __import__(import_name)
+        except ImportError:
+            missing.append(pkg)
+            
+    if missing:
+        log(f"Installing dependencies: {', '.join(missing)}")
+        try:
+            # Using --no-cache-dir to avoid some pip weirdness with torch
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + missing)
+        except:
+            print("\n❌ Auto-install failed. Run manually:")
+            print(f"{sys.executable} -m pip install {' '.join(missing)}")
+            sys.exit(1)
+
+# --- Image Processing (OpenCV/PIL) ---
+def process_image(image_path):
+    """Resizes and Crops image to be training friendly (square-ish)."""
     try:
-        return importlib.import_module(module_name)
-    except ImportError as e:
-        print(f"❌ Error importing 'core/{module_name}.py': {e}")
-        sys.exit(1)
+        from PIL import Image, ImageOps
+        
+        img = Image.open(image_path)
+        if img.mode in ("RGBA", "P"): img = img.convert("RGB")
+        
+        # Basic Center Crop to 1024x1024 (or nearest ratio)
+        # This is a placeholder for smarter CV2 face-detection cropping later
+        target_size = 1024
+        
+        # Resize logic: Keep aspect ratio, make smallest side target_size
+        ratio = max(target_size / img.size[0], target_size / img.size[1])
+        new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+        img = img.resize(new_size, Image.LANCZOS)
+        
+        # Center Crop
+        left = (new_size[0] - target_size) / 2
+        top = (new_size[1] - target_size) / 2
+        right = (new_size[0] + target_size) / 2
+        bottom = (new_size[1] + target_size) / 2
+        
+        img = img.crop((left, top, right, bottom))
+        img.save(image_path, "JPEG", quality=95)
+        return True
+    except Exception as e:
+        log(f"Image processing failed: {e}")
+        return False
 
-# Load the steps
-mod_scrape     = load_core_module("01_setup_scrape")
-mod_crop       = load_core_module("02_crop")
-mod_caption    = load_core_module("03_caption")
-mod_resize     = load_core_module("04_resize")
-mod_downsample = load_core_module("05_downsample")
-mod_publish    = load_core_module("06_publish")
+# --- LLM Captioning ---
+def load_llm(model_type="moondream"):
+    """Loads local LLM from C:/ai/models/LLM."""
+    from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor
+    import torch
 
-# --- 4. PIPELINE ---
-def run_pipeline(full_name, limit=100, gender=None):
-    print(f"🚀 Pipeline Started: {full_name}")
+    model_dir = get_model_dir()
     
-    # Step 1
-    print("\n=== 01: SETUP & SCRAPE ===")
-    slug = mod_scrape.run(full_name, limit, gender)
-    if not slug: return
+    if model_type == "qwen":
+        # Looking for Qwen folder
+        path = os.path.join(model_dir, "Qwen2.5-VL-7B-Instruct") # Adjust based on actual folder name
+        if not os.path.exists(path):
+            log(f"⚠️ Qwen model not found at {path}. Falling back to download (this might be huge!)")
+            path = "Qwen/Qwen2.5-VL-7B-Instruct"
+        
+        log(f"Loading Qwen from {path}...")
+        try:
+            model = AutoModelForCausalLM.from_pretrained(
+                path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+            )
+            processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
+            return model, processor, "qwen"
+        except Exception as e:
+            log(f"Failed to load Qwen: {e}")
+            return None, None, None
 
-    # Step 2
-    print("\n=== 02: CROP ===")
-    mod_crop.run(slug)
+    elif model_type == "moondream":
+        path = os.path.join(model_dir, "moondream2")
+        if not os.path.exists(path):
+            path = "vikhyatk/moondream2" # Fallback to HF Hub
 
-    # Step 3
-    print("\n=== 03: CAPTION ===")
-    mod_caption.run(slug)
-
-    # Step 4
-    print("\n=== 04: RESIZE MASTER ===")
-    mod_resize.run(slug)
-
-    # Step 5
-    print("\n=== 05: DOWNSAMPLE ===")
-    mod_downsample.run(slug)
+        log(f"Loading Moondream from {path}...")
+        try:
+            model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True).to("cuda")
+            tokenizer = AutoTokenizer.from_pretrained(path)
+            return model, tokenizer, "moondream"
+        except Exception as e:
+            log(f"Failed to load Moondream: {e}")
+            return None, None, None
     
-    # Step 6
-    print("\n=== 06: PUBLISH ===")
-    mod_publish.run(slug)
-    
-    print(f"\n✅ ALL DONE: {full_name}")
+    return None, None, None
 
-if __name__ == "__main__":
+def generate_caption(image_path, model, processor, model_type, style="dg_char", trigger=TRIGGER_WORD):
+    from PIL import Image
+    try:
+        image = Image.open(image_path).convert("RGB")
+        
+        # --- PROMPT ENGINEERING ---
+        if style == "crinklypaper":
+            # CrinklyPaper Protocol
+            prompt = f"""
+            You are an expert captioner. Describe this image for AI training.
+            Rules:
+            1. Start with trigger word: "{trigger}".
+            2. Describe EVERYTHING: characters, clothing, background, lighting, camera angle.
+            3. Be objective.
+            4. DO NOT mention art style, anime, cartoon, or 2d.
+            5. Single paragraph.
+            """
+        else:
+            # Default DG Char
+            prompt = f"Describe this image in detail, starting with {trigger}, focus on physical appearance and clothing."
+
+        # --- INFERENCE ---
+        if model_type == "moondream":
+            enc_image = model.encode_image(image)
+            caption = model.answer_question(enc_image, prompt, tokenizer=processor)
+            
+        elif model_type == "qwen":
+            # Qwen VL Logic
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = processor(text=[text], images=[image], padding=True, return_tensors="pt").to("cuda")
+            
+            generated_ids = model.generate(**inputs, max_new_tokens=256)
+            generated_ids_trimmed = [
+                out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            ]
+            caption = processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+
+        return caption.strip()
+
+    except Exception as e:
+        log(f"Captioning failed: {e}")
+        return f"{trigger}, failed to caption"
+
+# --- Main Pipeline ---
+def determine_output_dir(search_term):
+    folder_name = re.sub(r'[\\/*?:"<>|]', "", search_term).replace(" ", "_")
+    windows_drive = f"/mnt/h/My Drive/AI/Datasets/{folder_name}"
+    if os.path.exists("/mnt/h"):
+        try: os.makedirs(windows_drive, exist_ok=True); return windows_drive
+        except: pass
+    local_dir = f"datasets/{folder_name}"
+    os.makedirs(local_dir, exist_ok=True)
+    return local_dir
+
+def fetch_bing_images(query, limit):
+    log(f"Searching Bing for: '{query}'...")
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    url = f"https://www.bing.com/images/async?q={query}&first=0&count={limit}&adlt=off"
+    try:
+        r = requests.get(url, headers=headers)
+        links = re.findall(r'murl&quot;:&quot;(.*?)&quot;', r.text)
+        return links[:limit]
+    except Exception as e:
+        log(f"Search failed: {e}"); return []
+
+def download_worker(url, output_dir, index):
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200: return None
+        
+        from PIL import Image
+        img = Image.open(BytesIO(r.content))
+        
+        filename = f"image_{index:04d}.jpg"
+        save_path = os.path.join(output_dir, filename)
+        
+        # Save raw first
+        img.convert("RGB").save(save_path, "JPEG", quality=100)
+        
+        # Post-Process (Crop/Resize)
+        process_image(save_path)
+        
+        return save_path
+    except: return None
+
+def main():
+    check_and_install_dependencies()
+    
     parser = argparse.ArgumentParser()
-    parser.add_argument("name", nargs="?", help="Subject Full Name")
-    parser.add_argument("--limit", type=int, default=100)
-    parser.add_argument("--gender", choices=["m", "f"])
-    parser.add_argument("--only-step", type=int, help="Run specific step (1-6)")
+    parser.add_argument("search_term", nargs="?", default=DEFAULT_SEARCH_TERM)
+    parser.add_argument("--count", type=int, default=MAX_IMAGES)
+    parser.add_argument("--caption_style", choices=["dg_char", "crinklypaper"], default="crinklypaper")
+    parser.add_argument("--model", choices=["qwen", "moondream"], default="moondream")
+    parser.add_argument("--skip_caption", action="store_true")
     args = parser.parse_args()
 
-    if not args.name:
-        print("Usage: python DG_collect_dataset.py 'Subject Name'")
-        sys.exit(1)
+    # 1. Setup
+    output_dir = determine_output_dir(args.search_term)
+    log(f"Output: {output_dir}")
+    
+    # 2. Download
+    urls = fetch_bing_images(args.search_term, args.count)
+    if not urls: log("No images found."); sys.exit(1)
+    
+    downloaded_files = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(download_worker, url, output_dir, i) for i, url in enumerate(urls)]
+        for f in concurrent.futures.as_completed(futures):
+            path = f.result()
+            if path: downloaded_files.append(path)
+            
+    log(f"Downloaded {len(downloaded_files)} images.")
 
-    if args.only_step:
-        slug = utils.slugify(args.name)
-        steps = {
-            1: lambda: mod_scrape.run(args.name, args.limit, args.gender),
-            2: lambda: mod_crop.run(slug),
-            3: lambda: mod_caption.run(slug),
-            4: lambda: mod_resize.run(slug),
-            5: lambda: mod_downsample.run(slug),
-            6: lambda: mod_publish.run(slug)
-        }
-        if args.only_step in steps:
-            steps[args.only_step]()
+    # 3. Captioning (Optional)
+    if not args.skip_caption and downloaded_files:
+        log(f"Initializing {args.model} for captioning...")
+        model, processor, m_type = load_llm(args.model)
+        
+        if model:
+            log(f"Captioning with style: {args.caption_style}")
+            for img_path in downloaded_files:
+                cap = generate_caption(img_path, model, processor, m_type, args.caption_style)
+                
+                txt_path = os.path.splitext(img_path)[0] + ".txt"
+                with open(txt_path, "w", encoding="utf-8") as f:
+                    f.write(cap)
+                log(f"Captioned: {os.path.basename(img_path)}")
         else:
-            print("❌ Invalid step number. Use 1-6.")
-    else:
-        run_pipeline(args.name, args.limit, args.gender)
+            log("❌ Could not load LLM. Skipping captions.")
+
+    log("✅ Dataset Ready.")
+
+if __name__ == "__main__":
+    main()
