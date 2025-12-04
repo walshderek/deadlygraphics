@@ -1,6 +1,6 @@
 # Script Name: DG_collect_dataset.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: AI Dataset Factory. Scrapes -> Crops -> Captions (Qwen/Moondream) -> Prepares for LoRA.
+# Description: AI Dataset Factory. Scrapes -> Crops -> Captions (Qwen/Moondream) -> Logs to Google Sheets.
 
 import sys
 import os
@@ -14,18 +14,30 @@ import requests
 import re
 import platform
 import json
+import datetime
 from urllib.parse import urlparse, unquote
 from io import BytesIO
 
 # --- Configuration ---
 DEFAULT_SEARCH_TERM = "portrait photo"
-TRIGGER_WORD = "ohwx" # Default trigger word for CrinklyPaper style
+TRIGGER_WORD = "ohwx" # Default trigger word
 MAX_IMAGES = 50
 MAX_WORKERS = 5
 
 # LLM Paths (Cross-Platform)
-WIN_MODEL_PATH = r"C:\ai\models\LLM"
-WSL_MODEL_PATH = "/mnt/c/ai/models/LLM"
+if os.name == 'nt':
+    WIN_MODEL_PATH = r"C:\ai\models\LLM"
+    GOOGLE_CREDENTIALS_PATH = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\client_secret.json"
+else:
+    WSL_MODEL_PATH = "/mnt/c/ai/models/LLM"
+    # Translate Windows path to WSL
+    GOOGLE_CREDENTIALS_PATH = "/mnt/c/AI/apps/ComfyUI Desktop/custom_nodes/comfyui-google-sheets-integration/client_secret.json"
+
+# Google Sheet Name (Share your sheet with the client_email from the json if using service account, 
+# or ensure your user has access if using OAuth client ID flow - OAuth flow requires browser interaction once)
+# Since you provided a client_secret.json for an installed app, we will use a flow that might pop up a browser or provide a link.
+# Ideally, for a headless script, a Service Account is better, but we will work with what you have.
+SHEET_NAME = "DeadlyGraphics LoRA Tracker" 
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
@@ -44,11 +56,12 @@ def get_model_dir():
 
 # --- Dependency Management ---
 def check_and_install_dependencies():
-    # Added: opencv, torch, transformers, einops for LLMs
+    # Added: gspread, oauth2client, google-auth-oauthlib, google-auth-httplib2
     required = [
         'requests', 'tqdm', 'beautifulsoup4', 'Pillow', 
         'opencv-python-headless', 'torch', 'transformers', 
-        'einops', 'accelerate', 'qwen_vl_utils'
+        'einops', 'accelerate', 'qwen_vl_utils', 'gspread', 
+        'oauth2client', 'google-auth-oauthlib', 'google-auth-httplib2'
     ]
     
     missing = []
@@ -59,6 +72,8 @@ def check_and_install_dependencies():
             if pkg == 'Pillow': import_name = 'PIL'
             if pkg == 'opencv-python-headless': import_name = 'cv2'
             if pkg == 'qwen_vl_utils': import_name = 'qwen_vl_utils'
+            if pkg == 'google-auth-oauthlib': import_name = 'google_auth_oauthlib'
+            if pkg == 'google-auth-httplib2': import_name = 'google_auth_httplib2'
             __import__(import_name)
         except ImportError:
             missing.append(pkg)
@@ -66,32 +81,80 @@ def check_and_install_dependencies():
     if missing:
         log(f"Installing dependencies: {', '.join(missing)}")
         try:
-            # Using --no-cache-dir to avoid some pip weirdness with torch
             subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + missing)
         except:
             print("\n❌ Auto-install failed. Run manually:")
             print(f"{sys.executable} -m pip install {' '.join(missing)}")
             sys.exit(1)
 
+# --- Google Sheets Integration ---
+def log_to_google_sheet(project_name, trigger_word, image_count, model_used):
+    log("Logging to Google Sheets...")
+    
+    if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
+        log(f"❌ Google Credentials not found at: {GOOGLE_CREDENTIALS_PATH}")
+        return
+
+    try:
+        import gspread
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from google.auth.transport.requests import Request
+        import pickle
+
+        # Scopes required
+        SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        
+        creds = None
+        token_path = 'token.pickle' # Save token locally to avoid re-auth
+
+        if os.path.exists(token_path):
+            with open(token_path, 'rb') as token:
+                creds = pickle.load(token)
+        
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                # This flow opens a browser. If headless (WSL), it might give a URL to click.
+                flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CREDENTIALS_PATH, SCOPES)
+                # run_console() is better for WSL/Remote
+                creds = flow.run_console() 
+            
+            with open(token_path, 'wb') as token:
+                pickle.dump(creds, token)
+
+        client = gspread.authorize(creds)
+        
+        try:
+            sheet = client.open(SHEET_NAME).sheet1
+        except gspread.SpreadsheetNotFound:
+            log(f"⚠️ Sheet '{SHEET_NAME}' not found. Creating it...")
+            sheet = client.create(SHEET_NAME).sheet1
+            sheet.append_row(["Timestamp", "Project Name", "Trigger Word", "Image Count", "Model", "Status"])
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sheet.append_row([timestamp, project_name, trigger_word, image_count, model_used, "Ready for Training"])
+        log(f"✅ Successfully logged '{project_name}' to Google Sheet.")
+
+    except Exception as e:
+        log(f"❌ Google Sheets Logging Failed: {e}")
+
+
 # --- Image Processing (OpenCV/PIL) ---
 def process_image(image_path):
-    """Resizes and Crops image to be training friendly (square-ish)."""
+    """Resizes and Crops image to be training friendly."""
     try:
         from PIL import Image, ImageOps
         
         img = Image.open(image_path)
         if img.mode in ("RGBA", "P"): img = img.convert("RGB")
         
-        # Basic Center Crop to 1024x1024 (or nearest ratio)
-        # This is a placeholder for smarter CV2 face-detection cropping later
         target_size = 1024
         
-        # Resize logic: Keep aspect ratio, make smallest side target_size
         ratio = max(target_size / img.size[0], target_size / img.size[1])
         new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
         img = img.resize(new_size, Image.LANCZOS)
         
-        # Center Crop
         left = (new_size[0] - target_size) / 2
         top = (new_size[1] - target_size) / 2
         right = (new_size[0] + target_size) / 2
@@ -106,17 +169,15 @@ def process_image(image_path):
 
 # --- LLM Captioning ---
 def load_llm(model_type="moondream"):
-    """Loads local LLM from C:/ai/models/LLM."""
     from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor
     import torch
 
     model_dir = get_model_dir()
     
     if model_type == "qwen":
-        # Looking for Qwen folder
-        path = os.path.join(model_dir, "Qwen2.5-VL-7B-Instruct") # Adjust based on actual folder name
+        path = os.path.join(model_dir, "Qwen2.5-VL-7B-Instruct")
         if not os.path.exists(path):
-            log(f"⚠️ Qwen model not found at {path}. Falling back to download (this might be huge!)")
+            log(f"⚠️ Qwen model not found at {path}. Falling back to download.")
             path = "Qwen/Qwen2.5-VL-7B-Instruct"
         
         log(f"Loading Qwen from {path}...")
@@ -133,7 +194,7 @@ def load_llm(model_type="moondream"):
     elif model_type == "moondream":
         path = os.path.join(model_dir, "moondream2")
         if not os.path.exists(path):
-            path = "vikhyatk/moondream2" # Fallback to HF Hub
+            path = "vikhyatk/moondream2"
 
         log(f"Loading Moondream from {path}...")
         try:
@@ -151,9 +212,7 @@ def generate_caption(image_path, model, processor, model_type, style="dg_char", 
     try:
         image = Image.open(image_path).convert("RGB")
         
-        # --- PROMPT ENGINEERING ---
         if style == "crinklypaper":
-            # CrinklyPaper Protocol
             prompt = f"""
             You are an expert captioner. Describe this image for AI training.
             Rules:
@@ -164,16 +223,13 @@ def generate_caption(image_path, model, processor, model_type, style="dg_char", 
             5. Single paragraph.
             """
         else:
-            # Default DG Char
             prompt = f"Describe this image in detail, starting with {trigger}, focus on physical appearance and clothing."
 
-        # --- INFERENCE ---
         if model_type == "moondream":
             enc_image = model.encode_image(image)
             caption = model.answer_question(enc_image, prompt, tokenizer=processor)
             
         elif model_type == "qwen":
-            # Qwen VL Logic
             messages = [
                 {
                     "role": "user",
@@ -224,19 +280,12 @@ def download_worker(url, output_dir, index):
     try:
         r = requests.get(url, timeout=10)
         if r.status_code != 200: return None
-        
         from PIL import Image
         img = Image.open(BytesIO(r.content))
-        
         filename = f"image_{index:04d}.jpg"
         save_path = os.path.join(output_dir, filename)
-        
-        # Save raw first
         img.convert("RGB").save(save_path, "JPEG", quality=100)
-        
-        # Post-Process (Crop/Resize)
         process_image(save_path)
-        
         return save_path
     except: return None
 
@@ -249,43 +298,79 @@ def main():
     parser.add_argument("--caption_style", choices=["dg_char", "crinklypaper"], default="crinklypaper")
     parser.add_argument("--model", choices=["qwen", "moondream"], default="moondream")
     parser.add_argument("--skip_caption", action="store_true")
+    # Add explicit trigger word argument, defaults to config TRIGGER_WORD if not set
+    parser.add_argument("--trigger", default=TRIGGER_WORD, help="Trigger word for the LoRA")
+    
+    # Step control flags
+    parser.add_argument("steps", nargs="*", help="Steps to run (e.g., 1 2,5). If empty, runs all.")
+    
     args = parser.parse_args()
 
-    # 1. Setup
-    output_dir = determine_output_dir(args.search_term)
-    log(f"Output: {output_dir}")
+    # Determine which steps to run
+    # 1: Scrape & Download
+    # 2: Process (Crop/Resize) - Currently integrated into download, but could be separate
+    # 3: Caption
+    # 6: Publish (Log to Sheet) - Matching your request for "step 6"
     
-    # 2. Download
-    urls = fetch_bing_images(args.search_term, args.count)
-    if not urls: log("No images found."); sys.exit(1)
-    
-    downloaded_files = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(download_worker, url, output_dir, i) for i, url in enumerate(urls)]
-        for f in concurrent.futures.as_completed(futures):
-            path = f.result()
-            if path: downloaded_files.append(path)
-            
-    log(f"Downloaded {len(downloaded_files)} images.")
+    run_all = not args.steps
+    steps_to_run = []
+    if args.steps:
+        # Handle comma separated or space separated
+        for s in args.steps:
+            parts = s.split(',')
+            for p in parts:
+                if '-' in p:
+                    start, end = map(int, p.split('-'))
+                    steps_to_run.extend(range(start, end + 1))
+                else:
+                    steps_to_run.append(int(p))
+    else:
+        steps_to_run = [1, 2, 3, 6] # Default flow
 
-    # 3. Captioning (Optional)
-    if not args.skip_caption and downloaded_files:
+    # 1. Setup & Download
+    output_dir = determine_output_dir(args.search_term)
+    downloaded_files = []
+    
+    if 1 in steps_to_run:
+        log(f"Output: {output_dir}")
+        urls = fetch_bing_images(args.search_term, args.count)
+        if not urls: log("No images found."); sys.exit(1)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(download_worker, url, output_dir, i) for i, url in enumerate(urls)]
+            for f in concurrent.futures.as_completed(futures):
+                path = f.result()
+                if path: downloaded_files.append(path)
+        log(f"Downloaded {len(downloaded_files)} images.")
+    else:
+        # If skipping download, assume files exist in output_dir for captioning
+        if os.path.exists(output_dir):
+             downloaded_files = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.endswith(".jpg")]
+
+    # 2. Process (Currently part of download, but logically step 2)
+    # If we skipped step 1 but want step 2, we'd re-process here. 
+    # For now, assuming step 1 includes basic processing.
+
+    # 3. Captioning
+    if 3 in steps_to_run and not args.skip_caption and downloaded_files:
         log(f"Initializing {args.model} for captioning...")
         model, processor, m_type = load_llm(args.model)
         
         if model:
             log(f"Captioning with style: {args.caption_style}")
             for img_path in downloaded_files:
-                cap = generate_caption(img_path, model, processor, m_type, args.caption_style)
-                
+                cap = generate_caption(img_path, model, processor, m_type, args.caption_style, args.trigger)
                 txt_path = os.path.splitext(img_path)[0] + ".txt"
-                with open(txt_path, "w", encoding="utf-8") as f:
-                    f.write(cap)
+                with open(txt_path, "w", encoding="utf-8") as f: f.write(cap)
                 log(f"Captioned: {os.path.basename(img_path)}")
         else:
             log("❌ Could not load LLM. Skipping captions.")
 
-    log("✅ Dataset Ready.")
+    # 6. Publish / Log
+    if 6 in steps_to_run:
+        log_to_google_sheet(args.search_term, args.trigger, len(downloaded_files), args.model)
+
+    log("✅ Dataset Pipeline Complete.")
 
 if __name__ == "__main__":
     main()
