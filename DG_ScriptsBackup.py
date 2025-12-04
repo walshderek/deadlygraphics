@@ -1,6 +1,6 @@
 # Script Name: DG_ScriptsBackup.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Cross-platform manager. Windows pushes. Linux pulls, isolates apps, and creates global launchers.
+# Description: Cross-platform manager. Windows pushes. Linux pulls/installs with app isolation.
 
 import os
 import sys
@@ -87,10 +87,7 @@ def push_mode(args, creds):
 
 # --- LINUX: PULL & INSTALL APP ---
 def pull_mode(args, creds):
-    if IS_WINDOWS:
-        log("Pull mode is for Linux/WSL only.", "FAIL"); sys.exit(1)
-
-    log("STARTING PULL: GitHub -> WSL...", "INFO")
+    log("STARTING PULL: Updating Code...", "INFO")
     
     wsl_user = creds["deadlygraphics"]["wsl_user"]
     wsl_pass = creds["deadlygraphics"].get("wsl_password", "")
@@ -114,13 +111,16 @@ def pull_mode(args, creds):
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
     # Bash Script: Handles Pulling, Isolating, Venv, and Shortcutting
-    bash_content = f"""#!/bin/bash
+    # Using raw string r"""...""" to prevent escape sequence warnings
+    bash_content = r"""#!/bin/bash
 set -e
+""" + f"""
 REPO_DIR="{workspace_root}"
 DEST_DIR="{dest_folder}"
 SCRIPT_NAME="{script_name}"
 APP_NAME="{app_folder_name}"
 SUDO_PASS="{wsl_pass}"
+IS_APP="{str(is_app).lower()}"
 
 echo "--> Target Repo: $REPO_DIR"
 
@@ -169,7 +169,7 @@ if [[ "$SCRIPT_NAME" == *"scraper"* ]]; then
 fi
 
 # 4. Dedicated VENV Setup (Apps Only)
-if [[ "{str(is_app).lower()}" == "true" ]]; then
+if [[ "$IS_APP" == "true" ]]; then
     cd "$DEST_DIR"
     
     # Ensure System Deps exist
@@ -182,21 +182,16 @@ if [[ "{str(is_app).lower()}" == "true" ]]; then
         python3 -m venv venv
     fi
     
-    # Activate & Install specific requirements
-    # Note: The script itself will handle specialized deps (like setuptools), 
-    # but we ensure the basics are here.
     source venv/bin/activate
     echo "--> Pre-loading base dependencies..."
     pip install --quiet --upgrade pip
     pip install --quiet setuptools wheel
     
     # 5. Create Global Shortcut / Launcher
-    # This creates a file in /usr/local/bin so you can type 'DG_videoscraper' anywhere
     LAUNCHER_PATH="/usr/local/bin/$APP_NAME"
     
     echo "--> Creating global launcher: $APP_NAME"
     
-    # Write launcher script
     cat <<EOF > /tmp/$APP_NAME.launcher
 #!/bin/bash
 cd "$DEST_DIR"
@@ -212,23 +207,41 @@ EOF
 fi
 """
 
-    # Write to File Bridge
-    temp_script_win = r"C:\dg_pull.sh"
-    temp_script_wsl = "/mnt/c/dg_pull.sh"
-    
-    try:
-        with open(temp_script_win, "w", newline="\n", encoding="utf-8") as f:
-            f.write(bash_content)
+    if IS_WINDOWS:
+        # --- WINDOWS -> WSL TRIGGER ---
+        # We write to H: bridge and tell WSL to run it
+        temp_script_win = r"C:\dg_pull.sh"
+        temp_script_wsl = "/mnt/c/dg_pull.sh"
         
-        cmd = ["wsl", "-u", wsl_user, "--cd", "~", "bash", temp_script_wsl]
-        subprocess.run(cmd, check=True)
-        log("WSL Update & Install Successful", "SUCCESS")
-        
-    except Exception as e:
-        log(f"WSL Install Failed: {e}", "FAIL")
-    finally:
-        if os.path.exists(temp_script_win):
-            os.remove(temp_script_win)
+        try:
+            with open(temp_script_win, "w", newline="\n", encoding="utf-8") as f:
+                f.write(bash_content)
+            
+            # Use wsl.exe to bridge execution
+            cmd = ["wsl", "-u", wsl_user, "--cd", "~", "bash", temp_script_wsl]
+            subprocess.run(cmd, check=True)
+            log("WSL Update & Install Successful", "SUCCESS")
+            
+        except Exception as e:
+            log(f"WSL Install Failed: {e}", "FAIL")
+        finally:
+            if os.path.exists(temp_script_win):
+                os.remove(temp_script_win)
+    else:
+        # --- NATIVE LINUX EXECUTION ---
+        # We are already in Linux! Don't use wsl.exe. Just run bash.
+        temp_script = f"/tmp/dg_install_{script_name}.sh"
+        try:
+            with open(temp_script, "w") as f:
+                f.write(bash_content)
+            
+            subprocess.run(["bash", temp_script], check=True)
+            log("Update Successful", "SUCCESS")
+        except Exception as e:
+            log(f"Update Failed: {e}", "FAIL")
+        finally:
+            if os.path.exists(temp_script):
+                os.remove(temp_script)
 
 def install_mode(args, creds):
     push_mode(args, creds)
