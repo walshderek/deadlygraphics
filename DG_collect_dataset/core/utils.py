@@ -1,3 +1,7 @@
+# Script Name: core/utils.py
+# Authors: DeadlyGraphics, Gemini, ChatGPT
+# Description: Shared utilities for paths, config loading, and dependency checking.
+
 import sys
 import os
 import subprocess
@@ -52,19 +56,16 @@ def update_trigger_db(name, trigger, gender):
     
     file_exists = DB_PATH.exists()
     
-    # Read existing to avoid duplicates
     rows = []
     if file_exists:
         with open(DB_PATH, 'r', newline='', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             rows = list(reader)
     
-    # Check if trigger already exists
     for row in rows:
         if row['TriggerWord'] == trigger:
-            return # Already exists
+            return 
             
-    # Add new row
     with open(DB_PATH, 'a', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=["Name", "TriggerWord", "Gender"])
         if not file_exists:
@@ -75,32 +76,26 @@ def update_trigger_db(name, trigger, gender):
 
 # --- BOOTSTRAPPER ---
 def bootstrap(install_reqs=False):
+    # Standard venv check
+    is_venv = (sys.prefix != sys.base_prefix)
+    if is_venv: return
+
     if sys.platform == "win32":
         venv_python = VENV_PATH / "Scripts" / "python.exe"
     else:
         venv_python = VENV_PATH / "bin" / "python3"
 
-    is_venv = (str(VENV_PATH.resolve()) in sys.executable) or (sys.prefix != sys.base_prefix)
-
-    if not is_venv:
-        if not venv_python.exists():
-            print(f"❌ VENV missing at {VENV_PATH}")
-            print("   Run: python3 -m venv .venv")
-            sys.exit(1)
-        
-        try:
-            subprocess.check_call([str(venv_python)] + sys.argv)
-            sys.exit(0)
-        except subprocess.CalledProcessError as e:
-            sys.exit(e.returncode)
-
-    if install_reqs and REQUIREMENTS_PATH.exists():
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "-r", str(REQUIREMENTS_PATH), "-q"]
-            )
-        except Exception:
-            pass
+    if not venv_python.exists():
+        print(f"❌ VENV missing at {VENV_PATH}")
+        print("   Run: python3 -m venv .venv")
+        sys.exit(1)
+    
+    # Relaunch in venv
+    try:
+        subprocess.check_call([str(venv_python)] + sys.argv)
+        sys.exit(0)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
 
 # --- PROJECT UTILS ---
 def get_project_path(project_slug):

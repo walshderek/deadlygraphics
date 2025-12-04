@@ -1,3 +1,7 @@
+# Script Name: core/04_resize.py
+# Authors: DeadlyGraphics, Gemini, ChatGPT
+# Description: Resizes cropped images to a master resolution (1024x1024) with padding if needed.
+
 import sys
 import os
 import utils
