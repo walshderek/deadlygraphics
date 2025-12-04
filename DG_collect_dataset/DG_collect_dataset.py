@@ -1,6 +1,6 @@
 # Script Name: DG_collect_dataset.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: AI Dataset Factory. Orchestrates modules. Installs ALL dependencies on first run.
+# Description: Modular Dataset Factory. Orchestrates core modules (Scrape -> Crop -> Caption -> Publish).
 
 import sys
 import os
@@ -8,56 +8,26 @@ import argparse
 import importlib
 import subprocess
 from pathlib import Path
-import platform
 
-# --- Configuration ---
-DEFAULT_SEARCH_TERM = "portrait photo"
-TRIGGER_WORD = "ohwx"
-MAX_IMAGES = 50
-
-# --- PATH SETUP ---
+# --- 1. PATH SETUP ---
 CORE_DIR = Path(__file__).parent / "core"
 sys.path.append(str(CORE_DIR))
 
-# --- Dependency Management (THE FINAL FIX) ---
-def check_and_install_dependencies():
-    """Aggressively checks and installs all dependencies needed by all core modules."""
-    required = [
-        'requests', 'tqdm', 'beautifulsoup4', 'Pillow', 
-        'opencv-python-headless', 'torch', 'transformers', 
-        'einops', 'accelerate', 'qwen_vl_utils', 
-        'gspread', 'oauth2client', 'google-auth-oauthlib', 'google-auth-httplib2',
-        'deepface', 'pandas', 'numpy', 'tf-keras'
-    ]
-    
+# --- 2. BOOTSTRAP ---
+def check_main_dependencies():
+    required = ['requests', 'tqdm']
     missing = []
     for pkg in required:
-        try:
-            # We only check the base package name here to see if it's installed
-            import_name = pkg.split('-')[0].split('<')[0]
-            if import_name == 'opencv': import_name = 'cv2'
-            if import_name == 'beautifulsoup4': import_name = 'bs4'
-            if import_name == 'Pillow': import_name = 'PIL'
-            __import__(import_name)
-        except ImportError:
-            missing.append(pkg)
-            
+        try: __import__(pkg)
+        except ImportError: missing.append(pkg)
+    
     if missing:
-        print(f"--> Installing missing dependencies: {', '.join(missing)}")
-        try:
-            # Install all missing packages in one go.
-            subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--upgrade', 'pip'] + missing)
-            print("--> Dependencies installed.")
-        except:
-            print("\n❌ CRITICAL: Auto-install failed.")
-            print(f"Run manually: {sys.executable} -m pip install {' '.join(missing)}")
-            sys.exit(1)
+        print(f"--> Installing main deps: {', '.join(missing)}")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install'] + missing)
 
-# --- 2. BOOTSTRAP ---
-# Run check immediately to prevent deepface/cv2 crash on import
-check_and_install_dependencies()
+check_main_dependencies()
 
-# --- 3. DYNAMIC MODULE LOADING ---
+# --- 3. IMPORT MODULES ---
 def load_core_module(module_name):
     try:
         return importlib.import_module(module_name)
@@ -65,8 +35,11 @@ def load_core_module(module_name):
         print(f"❌ Error importing 'core/{module_name}.py': {e}")
         sys.exit(1)
 
-# Import dependencies after check (to prevent crash)
-import utils
+try: import utils 
+except ImportError:
+    try: import core.utils as utils
+    except: pass
+
 # Load Steps
 mod_scrape     = load_core_module("01_setup_scrape")
 mod_crop       = load_core_module("02_crop")
@@ -79,8 +52,7 @@ mod_publish    = load_core_module("06_publish")
 def run_pipeline(args):
     print(f"🚀 Pipeline Started: {args.name}")
     
-    try: slug = utils.slugify(args.name)
-    except: slug = args.name.replace(" ", "_")
+    slug = utils.slugify(args.name)
 
     all_steps = [1, 2, 3, 4, 5, 6]
     if args.steps:
@@ -97,8 +69,7 @@ def run_pipeline(args):
     # Step 1: Scrape
     if 1 in all_steps:
         print("\n=== 01: SETUP & SCRAPE ===")
-        try: slug = mod_scrape.run(args.name, args.count)
-        except: slug = mod_scrape.run(args.name, args.count)
+        slug = mod_scrape.run(args.name, args.count, args.gender)
         if not slug: return
 
     # Step 2: Crop
@@ -108,6 +79,7 @@ def run_pipeline(args):
 
     # Step 3: Caption
     if 3 in all_steps:
+        if args.skip_caption: print("\n=== 03: CAPTION (Skipped by user) ==="); return
         print("\n=== 03: CAPTION ===")
         mod_caption.run(slug, trigger_word=args.trigger, model_name=args.model, style=args.style)
 
@@ -120,7 +92,7 @@ def run_pipeline(args):
     if 5 in all_steps:
         print("\n=== 05: DOWNSAMPLE ===")
         mod_downsample.run(slug)
-    
+
     # Step 6: Publish
     if 6 in all_steps:
         print("\n=== 06: PUBLISH ===")
@@ -136,6 +108,7 @@ if __name__ == "__main__":
     parser.add_argument("--trigger", default="ohwx", help="Trigger word")
     parser.add_argument("--model", choices=["moondream", "qwen"], default="moondream", help="LLM Model")
     parser.add_argument("--style", default="crinklypaper", help="Caption Style")
+    parser.add_argument("--skip_caption", action="store_true", help="Skip captioning")
     parser.add_argument("steps", nargs="*", help="Steps (e.g. 1 3-5)")
     
     args = parser.parse_args()
