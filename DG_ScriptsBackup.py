@@ -1,6 +1,6 @@
 # Script Name: DG_ScriptsBackup.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Cross-platform manager. Windows Pushes. Linux Pulls (FAST - No Installs).
+# Description: Cross-platform manager. Windows pushes (Case-Agnostic). Linux pulls (Native).
 
 import os
 import sys
@@ -66,26 +66,27 @@ def push_mode(args, creds):
 
     log(f"Source: {source_path}", "INFO")
 
-    # Git Setup
+    # 1. Clone/Init
     url = get_remote_url(creds)
     if not repo_path.exists():
         run_command(f'git clone "{url}" "{repo_path}"')
 
+    # 2. Config
     email = creds["github"]["email"]
     user = creds["github"]["user"]
     run_command(f'git config user.email "{email}"', cwd=repo_path)
     run_command(f'git config user.name "{user}"', cwd=repo_path)
     run_command(f'git remote set-url origin "{url}"', cwd=repo_path)
 
-    # Copy
+    # 3. Copy Logic
     if source_path.is_dir():
         if dest_path.exists(): shutil.rmtree(dest_path)
         shutil.copytree(source_path, dest_path, ignore=shutil.ignore_patterns('venv', '__pycache__', '.git', '*.pyc'))
     else:
         shutil.copy2(source_path, dest_path)
 
-    # Push
-    run_command(f'git add --all "{target_name}"', cwd=repo_path)
+    # 4. Push (Force Add All to fix Casing Issues)
+    run_command('git add -A', cwd=repo_path)
     
     status = subprocess.run('git status --porcelain', cwd=repo_path, capture_output=True, text=True, shell=True)
     if status.stdout.strip():
@@ -102,19 +103,21 @@ def pull_mode(args, creds):
 
     log("STARTING PULL: GitHub -> WSL...", "INFO")
     
-    # Names & Paths
-    script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
-    if script_name.endswith(".py"):
-        app_name = os.path.splitext(script_name)[0]
+    # Resolve Names
+    input_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
+    
+    if input_name.endswith(".py"):
+        app_name = os.path.splitext(input_name)[0]
         is_folder = False
     else:
-        app_name = script_name
+        app_name = input_name
         is_folder = True
 
+    # Paths
     repo_name = creds["deadlygraphics"]["repo_name"]
     workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
     
-    if "DG_ScriptsBackup" in script_name:
+    if "DG_ScriptsBackup" in input_name:
         dest_folder = os.path.join(workspace_root, "ai", "scripts")
         is_app = False
     else:
@@ -124,14 +127,13 @@ def pull_mode(args, creds):
     gh_user = creds["github"]["user"]
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
-    # The "SPEEDY" Bash Script
-    # NO sudo apt-get. NO pip install. Just Code.
+    # Bash Script
     bash_content = r"""#!/bin/bash
 set -e
 """ + f"""
 REPO_DIR="{workspace_root}"
 DEST_DIR="{dest_folder}"
-INPUT_NAME="{script_name}"
+INPUT_NAME="{input_name}"
 APP_NAME="{app_name}"
 IS_APP="{str(is_app).lower()}"
 IS_FOLDER="{str(is_folder).lower()}"
@@ -159,7 +161,6 @@ SRC=$(find "$REPO_DIR" -maxdepth 1 -iname "$INPUT_NAME" | head -n 1)
 if [ -e "$SRC" ]; then
     echo "--> Installing from $SRC..."
     
-    # Backup
     if [ -d "$DEST_DIR" ]; then
         if [ "$(ls -A $DEST_DIR)" ]; then
              mkdir -p "$DEST_DIR/../old"
@@ -178,53 +179,64 @@ else
     exit 1
 fi
 
-# 3. Configs
-if [[ "$APP_NAME" == *"scraper"* ]]; then
-    if [ ! -f "$DEST_DIR/scrapervideo_checklist.txt" ]; then echo "# URLs here" > "$DEST_DIR/scrapervideo_checklist.txt"; fi
-fi
-if [[ "$APP_NAME" == *"dataset"* ]]; then
-    if [ ! -f "$DEST_DIR/dataset_checklist.txt" ]; then echo "# URLs here" > "$DEST_DIR/dataset_checklist.txt"; fi
-fi
-
-# 4. Basic Venv (Apps Only)
+# 3. Dependencies (Apps Only)
 if [[ "$IS_APP" == "true" ]]; then
     cd "$DEST_DIR"
     
-    # Only create if completely missing
+    echo "--> Checking Dependencies..."
+    # Interactive Sudo
+    sudo apt-get update > /dev/null
+    sudo apt-get install -y python3 python3-pip python3-venv unzip wget ffmpeg > /dev/null
+
+    # Chrome Check
+    if ! command -v google-chrome &> /dev/null; then
+        echo "--> Installing Chrome..."
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list'
+        sudo apt-get update > /dev/null; sudo apt-get install -y google-chrome-stable > /dev/null
+    fi
+    
+    # Venv Repair
     if [ ! -f "venv/bin/activate" ]; then
         echo "--> Creating Venv..."
+        rm -rf venv
         python3 -m venv venv
     fi
     
-    # 5. Shortcut
-    MAIN_SCRIPT=$(find "$DEST_DIR" -maxdepth 1 -iname "$APP_NAME.py" | head -n 1)
-    if [ -z "$MAIN_SCRIPT" ]; then
-         MAIN_SCRIPT=$(find "$DEST_DIR" -maxdepth 1 -iname "$(echo $APP_NAME | tr '[:upper:]' '[:lower:]').py" | head -n 1)
-    fi
+    source venv/bin/activate
+    echo "--> Updating Python Libs..."
+    # Install core libs for all apps
+    pip install --quiet --upgrade pip
+    pip install --quiet setuptools wheel "blinker<1.8.0" webdriver-manager yt-dlp tqdm requests beautifulsoup4 selenium selenium-wire undetected-chromedriver Pillow opencv-python-headless torch transformers accelerate einops qwen_vl_utils huggingface_hub gspread oauth2client google-auth-oauthlib google-auth-httplib2
 
+    # 5. Shortcut
+    # Find entry point script (e.g. DG_collect_dataset.py)
+    MAIN_SCRIPT=$(find "$DEST_DIR" -maxdepth 1 -iname "$APP_NAME.py" | head -n 1)
+    
     if [ -f "$MAIN_SCRIPT" ]; then
         LAUNCHER="/usr/local/bin/$APP_NAME"
-        # Only ask for password if shortcut doesn't exist or is wrong
-        if [ ! -f "$LAUNCHER" ]; then
-             echo "--> Creating Shortcut (Enter password if asked)..."
-             cat <<EOF > /tmp/$APP_NAME.launcher
+        cat <<EOF > /tmp/$APP_NAME.launcher
 #!/bin/bash
 cd "$DEST_DIR"
 source venv/bin/activate
 python3 "$MAIN_SCRIPT" "\$@"
 EOF
-             chmod +x /tmp/$APP_NAME.launcher
+        chmod +x /tmp/$APP_NAME.launcher
+        
+        if [ ! -f "$LAUNCHER" ]; then
+             echo "--> Creating Shortcut (Password may be required)..."
              sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER"
-             sudo chmod +x "$LAUNCHER"
-             echo "✅ Shortcut created! Run '$APP_NAME'"
+        else
+             sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER" 2>/dev/null || true
         fi
+        sudo chmod +x "$LAUNCHER"
+        echo "✅ Shortcut created! Run '$APP_NAME'"
     fi
 fi
 
 echo "--> DONE!"
 """
 
-    # Execute
     temp_script = f"/tmp/dg_install_{app_name}.sh"
     try:
         with open(temp_script, "w") as f: f.write(bash_content)
@@ -246,6 +258,7 @@ def main():
     parser.add_argument("mode", choices=["push", "pull", "install"])
     parser.add_argument("file_path", nargs="?")
     parser.add_argument("--name", dest="target_name")
+    parser.add_argument("--folder", dest="wsl_folder")
     args = parser.parse_args()
 
     if args.mode == "push": push_mode(args, creds)

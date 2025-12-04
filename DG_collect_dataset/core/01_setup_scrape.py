@@ -1,126 +1,74 @@
-import sys
+# Script Name: core/01_setup_scrape.py
+# Description: Scrapes Bing Images for the dataset.
+
 import os
-import subprocess
+import sys
+import requests
 import re
-import json
-import random
-import csv
-from pathlib import Path
+import concurrent.futures
+from io import BytesIO
+from PIL import Image
+import utils
 
-# --- PATH CONFIGURATION ---
-ROOT_DIR = Path(__file__).parent.parent 
-VENV_PATH = ROOT_DIR / ".venv"
-REQUIREMENTS_PATH = ROOT_DIR / "core" / "requirements.txt"
+def fetch_bing_images(query, limit):
+    print(f"--> Searching Bing for: '{query}'")
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    url = f"https://www.bing.com/images/async?q={query}&first=0&count={limit}&adlt=off"
+    try:
+        r = requests.get(url, headers=headers)
+        return re.findall(r'murl&quot;:&quot;(.*?)&quot;', r.text)[:limit]
+    except Exception as e:
+        print(f"❌ Search failed: {e}")
+        return []
 
-# Output Directories
-LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs" 
-LINUX_DATASETS_ROOT = ROOT_DIR / "datasets" 
-DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
-
-DIRS = {
-    "scrape": "00_scraped",
-    "crop": "01_cropped",
-    "caption": "02_captions",
-    "master": "03_master_1024",
-    "downsample": "04_downsampled",
-    "publish": "05_publish"
-}
-
-# --- MUSUBI CONFIG ---
-MUSUBI_PATHS = {
-    "win_models": r"C:\AI\models",
-    "wsl_models": "/home/seanf/ai/models",
-    "win_app": r"C:\AI\apps\musubi-tuner",
-    "wsl_app": "/home/seanf/ai/apps/musubi-tuner"
-}
-
-# --- PATH HELPERS ---
-def get_windows_unc_path(linux_path):
-    r"""
-    Converts /home/seanf/ai/... -> \\wsl.localhost\Ubuntu\home\seanf\ai\...
-    """
-    p = str(linux_path).replace("/mnt/c/", "C:/")
-    if p.startswith("/home"):
-        win_style = p.replace("/", "\\")
-        return f"\\\\wsl.localhost\\Ubuntu{win_style}"
-    return p
-
-# --- DATABASE HELPERS ---
-def update_trigger_db(name, trigger, gender):
-    """Updates the CSV database with the new character."""
-    DB_PATH.parent.mkdir(exist_ok=True)
-    
-    file_exists = DB_PATH.exists()
-    
-    # Read existing to avoid duplicates
-    rows = []
-    if file_exists:
-        with open(DB_PATH, 'r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-    
-    # Check if trigger already exists
-    for row in rows:
-        if row['TriggerWord'] == trigger:
-            return # Already exists
-            
-    # Add new row
-    with open(DB_PATH, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=["Name", "TriggerWord", "Gender"])
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow({"Name": name, "TriggerWord": trigger, "Gender": gender})
-    
-    print(f"📚 Database updated: {name} -> {trigger}")
-
-# --- BOOTSTRAPPER ---
-def bootstrap(install_reqs=False):
-    if sys.platform == "win32":
-        venv_python = VENV_PATH / "Scripts" / "python.exe"
-    else:
-        venv_python = VENV_PATH / "bin" / "python3"
-
-    is_venv = (str(VENV_PATH.resolve()) in sys.executable) or (sys.prefix != sys.base_prefix)
-
-    if not is_venv:
-        if not venv_python.exists():
-            print(f"❌ VENV missing at {VENV_PATH}")
-            print("   Run: python3 -m venv .venv")
-            sys.exit(1)
+def download_worker(url, dest_dir, idx):
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200: return None
         
-        try:
-            subprocess.check_call([str(venv_python)] + sys.argv)
-            sys.exit(0)
-        except subprocess.CalledProcessError as e:
-            sys.exit(e.returncode)
+        img = Image.open(BytesIO(r.content)).convert("RGB")
+        filename = f"img_{idx:04d}.jpg"
+        path = os.path.join(dest_dir, filename)
+        img.save(path, "JPEG", quality=95)
+        return path
+    except:
+        return None
 
-    if install_reqs and REQUIREMENTS_PATH.exists():
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "-r", str(REQUIREMENTS_PATH), "-q"]
-            )
-        except Exception:
-            pass
+def run(full_name, limit=50, gender=None):
+    # 1. Setup Directories
+    slug = utils.slugify(full_name)
+    path = utils.get_project_path(slug)
+    scrape_dir = path / utils.DIRS['scrape'] # "00_scraped"
+    
+    if not scrape_dir.exists():
+        scrape_dir.mkdir(parents=True, exist_ok=True)
 
-# --- PROJECT UTILS ---
-def get_project_path(project_slug):
-    return LINUX_PROJECTS_ROOT / project_slug
+    print(f"--> Output: {scrape_dir}")
 
-def load_config(project_slug):
-    path = get_project_path(project_slug) / "project_config.json"
-    if not path.exists(): return None
-    with open(path, 'r') as f: return json.load(f)
+    # 2. Get URLs
+    urls = fetch_bing_images(full_name, limit)
+    if not urls:
+        print("❌ No images found.")
+        return slug
 
-def save_config(project_slug, data):
-    path = get_project_path(project_slug) / "project_config.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'w') as f: json.dump(data, f, indent=4)
-
-def slugify(text):
-    return re.sub(r'[\W_]+', '_', text.lower()).strip('_')
-
-def gen_trigger(name):
-    parts = name.split()
-    first = parts[0].upper()[:2]
-    last = parts[-1].upper()[0] if len(parts) > 1 else "X"
-    return f"{first}{random.randint(100,999)}{last}"
+    # 3. Download
+    print(f"--> Downloading {len(urls)} images...")
+    downloaded = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        futures = [ex.submit(download_worker, u, str(scrape_dir), i) for i, u in enumerate(urls)]
+        for f in concurrent.futures.as_completed(futures):
+            if f.result(): downloaded += 1
+    
+    print(f"✅ Downloaded {downloaded} images.")
+    
+    # 4. Save Config
+    config = {
+        "name": full_name,
+        "slug": slug,
+        "gender": gender,
+        "trigger": "ohwx", # Default, updated later
+        "count": downloaded
+    }
+    utils.save_config(slug, config)
+    
+    return slug
