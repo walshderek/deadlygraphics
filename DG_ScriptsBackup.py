@@ -1,6 +1,6 @@
 # Script Name: DG_ScriptsBackup.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Cross-platform manager. Windows pushes. Linux pulls (Force Reset + App Isolation).
+# Description: Cross-platform manager. Windows Pushes. Linux Pulls (FAST - No Installs).
 
 import os
 import sys
@@ -56,7 +56,6 @@ def push_mode(args, creds):
     source_path = Path(args.file_path if args.file_path else DEFAULT_SCRIPT)
     
     if not source_path.exists():
-        # Fallback: Check current directory
         if (Path.cwd() / args.file_path).exists():
              source_path = Path.cwd() / args.file_path
         else:
@@ -67,12 +66,11 @@ def push_mode(args, creds):
 
     log(f"Source: {source_path}", "INFO")
 
-    # Git Init
+    # Git Setup
     url = get_remote_url(creds)
     if not repo_path.exists():
         run_command(f'git clone "{url}" "{repo_path}"')
 
-    # Git Config
     email = creds["github"]["email"]
     user = creds["github"]["user"]
     run_command(f'git config user.email "{email}"', cwd=repo_path)
@@ -104,7 +102,7 @@ def pull_mode(args, creds):
 
     log("STARTING PULL: GitHub -> WSL...", "INFO")
     
-    # Names
+    # Names & Paths
     script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
     if script_name.endswith(".py"):
         app_name = os.path.splitext(script_name)[0]
@@ -113,7 +111,6 @@ def pull_mode(args, creds):
         app_name = script_name
         is_folder = True
 
-    # Paths
     repo_name = creds["deadlygraphics"]["repo_name"]
     workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
     
@@ -127,8 +124,8 @@ def pull_mode(args, creds):
     gh_user = creds["github"]["user"]
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
-    # Bash Script (Hard Reset Logic)
-    # Note the r"" string and the lack of backslashes before $
+    # The "SPEEDY" Bash Script
+    # NO sudo apt-get. NO pip install. Just Code.
     bash_content = r"""#!/bin/bash
 set -e
 """ + f"""
@@ -141,7 +138,7 @@ IS_FOLDER="{str(is_folder).lower()}"
 
 echo "--> Target Repo: $REPO_DIR"
 
-# 1. Clone or Hard Reset (Fixes missing files)
+# 1. Update Repo
 if [ ! -d "$REPO_DIR" ]; then
     mkdir -p "$REPO_DIR"
     git clone "{repo_url}" "$REPO_DIR"
@@ -151,15 +148,12 @@ else
         git clone "{repo_url}" "$REPO_DIR"
     else
         cd "$REPO_DIR"
-        echo "--> Fetching and Resetting..."
-        git fetch origin
-        git reset --hard origin/main
+        git pull
     fi
 fi
 
-# 2. Install
+# 2. Install Logic
 mkdir -p "$DEST_DIR"
-# Find case-insensitive
 SRC=$(find "$REPO_DIR" -maxdepth 1 -iname "$INPUT_NAME" | head -n 1)
 
 if [ -e "$SRC" ]; then
@@ -180,7 +174,7 @@ if [ -e "$SRC" ]; then
     fi
     chmod +x "$DEST_DIR"/*.py 2>/dev/null || true
 else
-    echo "❌ Error: '$INPUT_NAME' not found in repo root!"
+    echo "❌ Error: '$INPUT_NAME' not found in repo!"
     exit 1
 fi
 
@@ -192,36 +186,16 @@ if [[ "$APP_NAME" == *"dataset"* ]]; then
     if [ ! -f "$DEST_DIR/dataset_checklist.txt" ]; then echo "# URLs here" > "$DEST_DIR/dataset_checklist.txt"; fi
 fi
 
-# 4. Dependencies
+# 4. Basic Venv (Apps Only)
 if [[ "$IS_APP" == "true" ]]; then
     cd "$DEST_DIR"
     
-    # Interactive Sudo for system deps
-    echo "--> Checking System Deps..."
-    sudo apt-get update > /dev/null
-    sudo apt-get install -y python3 python3-pip python3-venv unzip wget ffmpeg > /dev/null
-
-    # Chrome Check
-    if ! command -v google-chrome &> /dev/null; then
-        echo "--> Installing Chrome..."
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list'
-        sudo apt-get update > /dev/null; sudo apt-get install -y google-chrome-stable > /dev/null
-    fi
-    
-    # Venv Repair
+    # Only create if completely missing
     if [ ! -f "venv/bin/activate" ]; then
         echo "--> Creating Venv..."
-        rm -rf venv
         python3 -m venv venv
     fi
     
-    source venv/bin/activate
-    echo "--> Updating Python Libs..."
-    pip install --quiet --upgrade pip
-    # Core deps + blinker fix
-    pip install --quiet setuptools wheel "blinker<1.8.0" webdriver-manager yt-dlp tqdm requests beautifulsoup4 selenium selenium-wire undetected-chromedriver Pillow opencv-python-headless torch transformers accelerate einops qwen_vl_utils huggingface_hub gspread oauth2client google-auth-oauthlib google-auth-httplib2
-
     # 5. Shortcut
     MAIN_SCRIPT=$(find "$DEST_DIR" -maxdepth 1 -iname "$APP_NAME.py" | head -n 1)
     if [ -z "$MAIN_SCRIPT" ]; then
@@ -230,25 +204,28 @@ if [[ "$IS_APP" == "true" ]]; then
 
     if [ -f "$MAIN_SCRIPT" ]; then
         LAUNCHER="/usr/local/bin/$APP_NAME"
-        # Use raw string for python variables in bash heredoc
-        cat <<EOF > /tmp/$APP_NAME.launcher
+        # Only ask for password if shortcut doesn't exist or is wrong
+        if [ ! -f "$LAUNCHER" ]; then
+             echo "--> Creating Shortcut (Enter password if asked)..."
+             cat <<EOF > /tmp/$APP_NAME.launcher
 #!/bin/bash
 cd "$DEST_DIR"
 source venv/bin/activate
 python3 "$MAIN_SCRIPT" "\$@"
 EOF
-        chmod +x /tmp/$APP_NAME.launcher
-        sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER"
-        sudo chmod +x "$LAUNCHER"
-        echo "✅ Shortcut created! Run '$APP_NAME'"
+             chmod +x /tmp/$APP_NAME.launcher
+             sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER"
+             sudo chmod +x "$LAUNCHER"
+             echo "✅ Shortcut created! Run '$APP_NAME'"
+        fi
     fi
 fi
 
 echo "--> DONE!"
 """
 
-    # Native Execution
-    temp_script = f"/tmp/dg_install_{script_name}.sh"
+    # Execute
+    temp_script = f"/tmp/dg_install_{app_name}.sh"
     try:
         with open(temp_script, "w") as f: f.write(bash_content)
         subprocess.run(["bash", temp_script], check=True)
