@@ -1,6 +1,6 @@
 # Script Name: DG_collect_dataset.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Modular Orchestrator. Calls core modules for Scrape -> Crop -> Caption -> Publish.
+# Description: Modular Dataset Factory. Orchestrates core modules.
 
 import sys
 import os
@@ -15,106 +15,94 @@ sys.path.append(str(CORE_DIR))
 
 # --- 2. BOOTSTRAP & UTILS ---
 try:
-    import utils
+    import utils 
 except ImportError:
-    print(f"❌ Critical: 'core/utils.py' not found. Check folder structure.")
+    print(f"❌ CRITICAL: 'core/utils.py' not found.")
     sys.exit(1)
 
-# Self-Healing: Check if main dependencies exist
-def check_orchestrator_deps():
-    try:
-        import requests
-        import tqdm
-    except ImportError:
-        print("--> Installing orchestrator deps (requests, tqdm)...")
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'requests', 'tqdm'])
+# Auto-activate VENV
+if hasattr(utils, 'bootstrap'):
+    utils.bootstrap(install_reqs=True)
 
-check_orchestrator_deps()
-
-# --- 3. MODULE LOADER ---
-def load_module(name):
+# --- 3. LOAD MODULES ---
+def load_core_module(module_name):
     try:
-        return importlib.import_module(name)
+        return importlib.import_module(module_name)
     except ImportError as e:
-        print(f"❌ Failed to load module '{name}': {e}")
+        print(f"❌ Error importing 'core/{module_name}.py': {e}")
         sys.exit(1)
 
-mod_scrape     = load_module("01_setup_scrape")
-mod_crop       = load_module("02_crop")
-mod_caption    = load_module("03_caption")
-mod_resize     = load_module("04_resize")
-mod_downsample = load_module("05_downsample")
-mod_publish    = load_module("06_publish")
+mod_scrape     = load_core_module("01_setup_scrape")
+mod_crop       = load_core_module("02_crop")
+mod_caption    = load_core_module("03_caption")
+mod_resize     = load_core_module("04_resize")
+mod_downsample = load_core_module("05_downsample")
+mod_publish    = load_core_module("06_publish")
 
 # --- 4. PIPELINE ---
-def run_pipeline(args):
-    print(f"🚀 Pipeline Started: {args.name}")
+def run_pipeline(full_name, limit=100, gender=None, trigger=None, model=None, style=None, steps=None):
+    print(f"🚀 Pipeline Started: {full_name}")
     
-    # Generate slug (folder name)
-    slug = utils.slugify(args.name)
-    
-    # Determine steps
+    slug = utils.slugify(full_name)
+
     all_steps = [1, 2, 3, 4, 5, 6]
-    if args.steps:
+    if steps:
         selected = []
-        for s in args.steps:
-            parts = s.split(',')
+        for s in steps:
+            parts = str(s).split(',')
             for p in parts:
                 if '-' in p:
                     start, end = map(int, p.split('-'))
                     selected.extend(range(start, end + 1))
-                else:
-                    selected.append(int(p))
+                else: selected.append(int(p))
         all_steps = selected
 
-    # --- STEP 1: SCRAPE ---
+    # Step 1: Scrape
     if 1 in all_steps:
-        print("\n=== 01: SETUP & SCRAPE (Bing) ===")
-        try:
-            mod_scrape.run(args.name, args.count)
-        except Exception as e:
-            print(f"❌ Scrape failed: {e}")
-            return
+        print("\n=== 01: SETUP & SCRAPE ===")
+        try: slug = mod_scrape.run(full_name, limit, gender)
+        except: slug = mod_scrape.run(full_name, limit)
+        if not slug: return
 
-    # --- STEP 2: CROP ---
+    # Step 2: Crop
     if 2 in all_steps:
-        print("\n=== 02: CROP (Face Detection) ===")
+        print("\n=== 02: CROP ===")
         mod_crop.run(slug)
 
-    # --- STEP 3: CAPTION ---
+    # Step 3: Caption
     if 3 in all_steps:
-        if args.skip_caption:
-            print("\n=== 03: CAPTION (Skipped by user) ===")
-        else:
-            print(f"\n=== 03: CAPTION ({args.model} / {args.style}) ===")
-            mod_caption.run(slug, trigger=args.trigger, model=args.model, style=args.style)
+        print("\n=== 03: CAPTION ===")
+        try: mod_caption.run(slug, trigger_word=trigger, model_name=model, style=style)
+        except: mod_caption.run(slug)
 
-    # --- STEP 4: RESIZE ---
+    # Step 4: Resize
     if 4 in all_steps:
         print("\n=== 04: RESIZE MASTER ===")
         mod_resize.run(slug)
 
-    # --- STEP 5: DOWNSAMPLE ---
+    # Step 5: Downsample
     if 5 in all_steps:
         print("\n=== 05: DOWNSAMPLE ===")
         mod_downsample.run(slug)
-
-    # --- STEP 6: PUBLISH ---
+    
+    # Step 6: Publish
     if 6 in all_steps:
-        print("\n=== 06: PUBLISH (Log & Config) ===")
-        mod_publish.run(slug, trigger=args.trigger, model=args.model)
-
-    print(f"\n✅ ALL DONE: {args.name}")
+        print("\n=== 06: PUBLISH ===")
+        try: mod_publish.run(slug, trigger_word=trigger, model_name=model)
+        except: mod_publish.run(slug)
+    
+    print(f"\n✅ ALL DONE: {full_name}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("name", nargs="?", help="Subject Name (Search Term)")
-    parser.add_argument("--count", type=int, default=50, help="Max images to scrape")
-    parser.add_argument("--trigger", default="ohwx", help="Trigger word for captioning")
-    parser.add_argument("--model", choices=["moondream", "qwen"], default="moondream", help="LLM to use")
-    parser.add_argument("--style", choices=["dg_char", "crinklypaper"], default="crinklypaper", help="Caption style")
-    parser.add_argument("--skip_caption", action="store_true", help="Skip captioning step")
-    parser.add_argument("steps", nargs="*", help="Specific steps to run (e.g. 1 3-5)")
+    parser.add_argument("name", nargs="?", help="Subject Full Name")
+    parser.add_argument("--limit", type=int, default=50, help="Max images")
+    parser.add_argument("--gender", choices=["m", "f"], help="Gender")
+    parser.add_argument("--trigger", default="ohwx", help="Trigger word")
+    parser.add_argument("--model", choices=["moondream", "qwen"], default="moondream", help="LLM Model")
+    parser.add_argument("--style", default="crinklypaper", help="Caption Style")
+    parser.add_argument("--skip_caption", action="store_true", help="Skip captioning")
+    parser.add_argument("steps", nargs="*", help="Steps (e.g. 1 3-5)")
     
     args = parser.parse_args()
 
@@ -122,4 +110,4 @@ if __name__ == "__main__":
         print("Usage: DG_collect_dataset 'Subject Name' [options]")
         sys.exit(1)
 
-    run_pipeline(args)
+    run_pipeline(args.name, args.limit, args.gender, args.trigger, args.model, args.style, args.steps)
