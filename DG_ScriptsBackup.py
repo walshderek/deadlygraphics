@@ -1,6 +1,6 @@
 # Script Name: DG_ScriptsBackup.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Cross-platform manager. Windows pushes. Linux pulls, version-backups files, and sets up apps.
+# Description: Cross-platform manager. Windows pushes. Linux pulls, isolates apps, and creates global launchers.
 
 import os
 import sys
@@ -18,9 +18,11 @@ IS_WINDOWS = os.name == 'nt'
 if IS_WINDOWS:
     CREDENTIALS_FILE = r"C:\credentials\credentials.json"
     DEFAULT_SCRIPT = r"H:\My Drive\AI\DG_videoscraper.py"
+    BRIDGE_DIR = r"H:\My Drive\AI" 
 else:
     CREDENTIALS_FILE = "/mnt/c/credentials/credentials.json"
     DEFAULT_SCRIPT = "DG_videoscraper.py"
+    BRIDGE_DIR = "/mnt/h/My Drive/AI"
 
 def log(msg, level="INFO"):
     print(f"[{level}] {msg}")
@@ -83,17 +85,20 @@ def push_mode(args, creds):
     else:
         log("No changes to push.", "WARN")
 
-# --- LINUX: PULL FROM GITHUB ---
+# --- LINUX: PULL & INSTALL APP ---
 def pull_mode(args, creds):
     if IS_WINDOWS:
         log("Pull mode is for Linux/WSL only.", "FAIL"); sys.exit(1)
 
     log("STARTING PULL: GitHub -> WSL...", "INFO")
     
-    script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
-    
-    # --- PATH LOGIC ---
     wsl_user = creds["deadlygraphics"]["wsl_user"]
+    wsl_pass = creds["deadlygraphics"].get("wsl_password", "")
+    
+    script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
+    app_folder_name = os.path.splitext(script_name)[0]
+    
+    # Paths
     repo_name = creds["deadlygraphics"]["repo_name"]
     workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
     
@@ -102,91 +107,145 @@ def pull_mode(args, creds):
         dest_folder = os.path.join(workspace_root, "ai", "scripts")
         is_app = False
     else:
-        app_folder = os.path.splitext(script_name)[0]
-        dest_folder = os.path.join(workspace_root, "ai", "apps", app_folder)
+        dest_folder = os.path.join(workspace_root, "ai", "apps", app_folder_name)
         is_app = True
 
-    # 1. Update Repo (Clone/Pull)
     gh_user = creds["github"]["user"]
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
+
+    # Bash Script: Handles Pulling, Isolating, Venv, and Shortcutting
+    bash_content = f"""#!/bin/bash
+set -e
+REPO_DIR="{workspace_root}"
+DEST_DIR="{dest_folder}"
+SCRIPT_NAME="{script_name}"
+APP_NAME="{app_folder_name}"
+SUDO_PASS="{wsl_pass}"
+
+echo "--> Target Repo: $REPO_DIR"
+
+# 1. Update Master Repo
+if [ ! -d "$REPO_DIR" ]; then
+    echo "--> Cloning master repo..."
+    mkdir -p "$REPO_DIR"
+    git clone "{repo_url}" "$REPO_DIR"
+else
+    if [ ! -d "$REPO_DIR/.git" ]; then
+        echo "--> Repairing non-git folder..."
+        mv "$REPO_DIR" "$REPO_DIR_BACKUP_$(date +%s)"
+        git clone "{repo_url}" "$REPO_DIR"
+    else
+        echo "--> Pulling latest code..."
+        cd "$REPO_DIR"
+        git pull
+    fi
+fi
+
+# 2. App Isolation (Copy from Repo to App Folder)
+mkdir -p "$DEST_DIR"
+SRC="$REPO_DIR/$SCRIPT_NAME"
+DST="$DEST_DIR/$SCRIPT_NAME"
+
+if [ -f "$SRC" ]; then
+    if [ -f "$DST" ]; then
+        mkdir -p "$DEST_DIR/old"
+        cp "$DST" "$DEST_DIR/old/$SCRIPT_NAME.$(date +%Y%m%d_%H%M%S).bak"
+    fi
+    cp "$SRC" "$DST"
+    chmod +x "$DST"
+    echo "--> Installed $SCRIPT_NAME to $DEST_DIR"
+else
+    echo "❌ Error: $SCRIPT_NAME not found in repo root!"
+    exit 1
+fi
+
+# 3. Checklist & Configs
+if [[ "$SCRIPT_NAME" == *"scraper"* ]]; then
+    CHECKLIST="$DEST_DIR/scrapervideo_checklist.txt"
+    if [ ! -f "$CHECKLIST" ]; then
+        echo "# Paste URLs here (one per line)" > "$CHECKLIST"
+        echo "--> Created checklist: $CHECKLIST"
+    fi
+fi
+
+# 4. Dedicated VENV Setup (Apps Only)
+if [[ "{str(is_app).lower()}" == "true" ]]; then
+    cd "$DEST_DIR"
     
-    if not os.path.exists(workspace_root):
-        os.makedirs(workspace_root, exist_ok=True)
-        run_command(f'git clone "{repo_url}" .', cwd=workspace_root)
-    else:
-        if not os.path.exists(os.path.join(workspace_root, ".git")):
-             # If folder exists but isn't git, we assume it's broken or just a folder.
-             # We clone into a temp var or just try init. Simplest is clone if empty.
-             # User specifically asked NOT to backup entire folders like before.
-             # We will try to pull if possible, or just skip git update if it's messy and rely on file copy.
-             log(f"Warning: {workspace_root} is not a git repo. Skipping git pull.", "WARN")
-        else:
-             run_command('git pull', cwd=workspace_root)
+    # Ensure System Deps exist
+    echo "$SUDO_PASS" | sudo -S apt-get update > /dev/null
+    echo "$SUDO_PASS" | sudo -S apt-get install -y python3 python3-pip python3-venv unzip wget > /dev/null
 
-    # 2. FILE BACKUP & INSTALL
-    os.makedirs(dest_folder, exist_ok=True)
-    src = os.path.join(workspace_root, script_name)
-    dst = os.path.join(dest_folder, script_name)
+    # Create isolated VENV for this app
+    if [ ! -d "venv" ]; then
+        echo "--> Creating dedicated venv for $APP_NAME..."
+        python3 -m venv venv
+    fi
     
-    if os.path.exists(src):
-        # --- VERSION BACKUP LOGIC ---
-        if os.path.exists(dst):
-            old_dir = os.path.join(dest_folder, "old")
-            os.makedirs(old_dir, exist_ok=True)
-            
-            # Create Timestamped Filename: Name_YYYY_MM_DD_HHhr_MMm.py
-            timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%Hhr_%Mm")
-            name, ext = os.path.splitext(script_name)
-            backup_name = f"{name}_{timestamp}{ext}"
-            backup_path = os.path.join(old_dir, backup_name)
-            
-            shutil.copy2(dst, backup_path)
-            log(f"Backed up old version to: {backup_path}", "INFO")
+    # Activate & Install specific requirements
+    # Note: The script itself will handle specialized deps (like setuptools), 
+    # but we ensure the basics are here.
+    source venv/bin/activate
+    echo "--> Pre-loading base dependencies..."
+    pip install --quiet --upgrade pip
+    pip install --quiet setuptools wheel
+    
+    # 5. Create Global Shortcut / Launcher
+    # This creates a file in /usr/local/bin so you can type 'DG_videoscraper' anywhere
+    LAUNCHER_PATH="/usr/local/bin/$APP_NAME"
+    
+    echo "--> Creating global launcher: $APP_NAME"
+    
+    # Write launcher script
+    cat <<EOF > /tmp/$APP_NAME.launcher
+#!/bin/bash
+cd "$DEST_DIR"
+source venv/bin/activate
+python3 $SCRIPT_NAME "\$@"
+EOF
+    
+    chmod +x /tmp/$APP_NAME.launcher
+    echo "$SUDO_PASS" | sudo -S mv /tmp/$APP_NAME.launcher "$LAUNCHER_PATH"
+    echo "$SUDO_PASS" | sudo -S chmod +x "$LAUNCHER_PATH"
+    
+    echo "✅ Shortcut created! You can now run '$APP_NAME' from anywhere."
+fi
+"""
 
-        # Overwrite File
-        shutil.copy2(src, dst)
-        run_command(f'chmod +x "{dst}"')
-        log(f"Installed updated file to: {dst}", "SUCCESS")
-    else:
-        log(f"Script {script_name} not found in repo root.", "FAIL")
-        sys.exit(1)
-
-    # 3. Create Checklist File (If missing)
-    if is_app and "scraper" in script_name:
-        checklist_path = os.path.join(dest_folder, "scrapervideo_checklist.txt")
-        if not os.path.exists(checklist_path):
-            with open(checklist_path, "w") as f:
-                f.write("# Paste URLs here (one per line)\n")
-            log(f"Created checklist file: {checklist_path}", "SUCCESS")
-
-    # 4. Dependencies
-    if is_app:
-        log("Checking Dependencies...", "INFO")
-        venv_dir = os.path.join(dest_folder, "venv")
+    # Write to File Bridge
+    temp_script_win = r"C:\dg_pull.sh"
+    temp_script_wsl = "/mnt/c/dg_pull.sh"
+    
+    try:
+        with open(temp_script_win, "w", newline="\n", encoding="utf-8") as f:
+            f.write(bash_content)
         
-        if not os.path.exists(venv_dir):
-            try:
-                run_command(f"{sys.executable} -m venv venv", cwd=dest_folder)
-            except:
-                log("Venv failed. Try: sudo apt install python3-venv", "WARN")
+        cmd = ["wsl", "-u", wsl_user, "--cd", "~", "bash", temp_script_wsl]
+        subprocess.run(cmd, check=True)
+        log("WSL Update & Install Successful", "SUCCESS")
+        
+    except Exception as e:
+        log(f"WSL Install Failed: {e}", "FAIL")
+    finally:
+        if os.path.exists(temp_script_win):
+            os.remove(temp_script_win)
 
-        pip = os.path.join(venv_dir, "bin", "pip")
-        if os.path.exists(pip):
-            run_command(f'"{pip}" install --quiet --upgrade pip')
-            run_command(f'"{pip}" install --quiet yt-dlp tqdm requests beautifulsoup4 selenium undetected-chromedriver selenium-wire')
-    
-    log("WSL Update Complete!", "SUCCESS")
+def install_mode(args, creds):
+    push_mode(args, creds)
+    print("-" * 40)
+    pull_mode(args, creds)
 
 def main():
     creds = load_credentials()
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["push", "pull"])
+    parser.add_argument("mode", choices=["push", "pull", "install"])
     parser.add_argument("file_path", nargs="?")
     parser.add_argument("--name", dest="target_name")
     args = parser.parse_args()
 
     if args.mode == "push": push_mode(args, creds)
     elif args.mode == "pull": pull_mode(args, creds)
+    elif args.mode == "install": install_mode(args, creds)
 
 if __name__ == "__main__":
     main()
