@@ -7,185 +7,154 @@ import json
 from pathlib import Path
 
 # --- Configuration ---
-# Pointing to your new centralized credentials file
 CREDENTIALS_FILE_PATH = r"C:\credentials\credentials.json"
-
-# Default script to act on if none provided
 DEFAULT_LOCAL_SCRIPT = r"H:\My Drive\AI\DG_videoscraper.py"
 
 def log(message, level="INFO"):
-    prefix = {"INFO": "ℹ️", "SUCCESS": "✅", "ERROR": "❌", "WARN": "⚠️"}
-    print(f"{prefix.get(level, '')} {message}")
+    prefix = {"INFO": "[INFO]", "SUCCESS": "[DONE]", "ERROR": "[FAIL]", "WARN": "[WARN]"}
+    try:
+        print(f"{prefix.get(level, '')} {message}")
+    except:
+        print(f"[{level}] {message}")
 
 def load_credentials():
-    """Loads settings from the centralized JSON file."""
     if not os.path.exists(CREDENTIALS_FILE_PATH):
-        log(f"Credentials file missing at: {CREDENTIALS_FILE_PATH}", "ERROR")
-        log("Please create this file with your GitHub/Project details.", "ERROR")
+        log(f"Credentials file missing: {CREDENTIALS_FILE_PATH}", "ERROR")
         sys.exit(1)
-    
     try:
-        with open(CREDENTIALS_FILE_PATH, 'r') as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        log(f"Error reading JSON config: {e}", "ERROR")
-        sys.exit(1)
+        with open(CREDENTIALS_FILE_PATH, 'r') as f: return json.load(f)
+    except Exception as e:
+        log(f"Config Error: {e}", "ERROR"); sys.exit(1)
 
-def run_command(command, cwd=None, shell=False):
-    """Runs a system command."""
+def run_command(command, cwd=None):
     try:
-        subprocess.run(command, cwd=cwd, shell=shell, check=True)
-    except subprocess.CalledProcessError as e:
-        log(f"Command failed: {e}", "ERROR")
-        sys.exit(1)
+        subprocess.run(command, cwd=cwd, shell=True, check=True)
+    except subprocess.CalledProcessError:
+        log(f"Command failed: {command}", "ERROR"); sys.exit(1)
 
-def configure_git_identity(creds, repo_path):
-    """Sets local git config using identity from credentials.json."""
-    email = creds["github"].get("email")
-    name = creds["github"].get("user")
-    
-    if email and name:
-        run_command(["git", "config", "user.email", email], cwd=repo_path)
-        run_command(["git", "config", "user.name", name], cwd=repo_path)
-
-def get_remote_url(creds):
-    """Constructs the remote URL, injecting the token if present."""
-    user = creds["github"]["user"]
-    # We assume 'deadlygraphics' implies the repo name in the config
-    repo = creds["deadlygraphics"]["repo_name"]
-    token = creds["github"].get("token", "").strip()
-    
-    if token and "god" not in token.lower(): # Basic check to ensure it's not a placeholder
-        # Authenticated URL
-        return f"https://{token}@github.com/{user}/{repo}.git"
-    else:
-        # Standard URL
-        return f"https://github.com/{user}/{repo}.git"
-
+# --- PUSH MODE (Windows -> GitHub) ---
 def push_mode(args, creds):
-    log("🚀 STARTING PUSH (Backup)", "INFO")
-
-    # Access paths from the 'deadlygraphics' section
-    repo_path = Path(creds["deadlygraphics"]["paths"]["local_repo"])
+    log("STARTING PUSH: Windows -> GitHub...", "INFO")
     
-    # Source file logic
-    if args.file_path:
-        source_path = Path(args.file_path)
-    else:
-        source_path = Path(DEFAULT_LOCAL_SCRIPT)
-        
-    if not source_path.exists():
-        log(f"File not found: {source_path}", "ERROR")
-        sys.exit(1)
-
+    # Load Paths
+    repo_path = Path(creds["deadlygraphics"]["paths"]["local_repo"])
+    source_path = Path(args.file_path if args.file_path else DEFAULT_LOCAL_SCRIPT)
     target_name = args.target_name if args.target_name else source_path.name
     dest_path = repo_path / target_name
 
-    log(f"Source: {source_path}", "INFO")
-    log(f"Target Repo: {repo_path}", "INFO")
+    if not source_path.exists():
+        log(f"File not found: {source_path}", "ERROR"); sys.exit(1)
 
-    # 1. Clone if repo doesn't exist
-    repo_url = get_remote_url(creds)
+    # 1. Configure Remote
+    user = creds["github"]["user"]
+    repo = creds["deadlygraphics"]["repo_name"]
+    token = creds["github"].get("token", "").strip()
     
+    if token and "god" not in token.lower() and "XXX" not in token:
+        repo_url = f"https://{token}@github.com/{user}/{repo}.git"
+    else:
+        repo_url = f"https://github.com/{user}/{repo}.git"
+
     if not repo_path.exists():
-        log(f"Repo missing. Cloning...", "WARN")
-        run_command(["git", "clone", repo_url, str(repo_path)])
-    
+        run_command(f'git clone "{repo_url}" "{repo_path}"')
+
     # 2. Configure Identity
-    configure_git_identity(creds, repo_path)
-    
-    # 3. Update Remote URL (Ensure token is fresh)
-    log("Updating remote URL authentication...", "INFO")
-    run_command(["git", "remote", "set-url", "origin", repo_url], cwd=repo_path)
+    email = creds["github"]["email"]
+    run_command(f'git config user.email "{email}"', cwd=repo_path)
+    run_command(f'git config user.name "{user}"', cwd=repo_path)
+    run_command(f'git remote set-url origin "{repo_url}"', cwd=repo_path)
 
-    # 4. Copy File
+    # 3. Copy & Push
     shutil.copy2(source_path, dest_path)
-
-    # 5. Git Operations
-    run_command(["git", "add", target_name], cwd=repo_path)
+    run_command(f'git add "{target_name}"', cwd=repo_path)
     
-    # Check status
-    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo_path, capture_output=True, text=True)
-    
+    status = subprocess.run('git status --porcelain', cwd=repo_path, capture_output=True, text=True, shell=True)
     if status.stdout.strip():
-        commit_msg = f"Update {target_name}"
-        run_command(["git", "commit", "-m", commit_msg], cwd=repo_path)
-        run_command(["git", "push", "origin", "main"], cwd=repo_path)
-        log(f"✅ Successfully pushed {target_name}!", "SUCCESS")
+        run_command(f'git commit -m "Update {target_name}"', cwd=repo_path)
+        run_command('git push origin main', cwd=repo_path)
+        log(f"Successfully pushed {target_name} to GitHub!", "SUCCESS")
     else:
         log("No changes needed (file matches repo).", "WARN")
 
+# --- PULL MODE (Trigger WSL to Pull from GitHub) ---
 def install_mode(args, creds):
-    log("🚀 STARTING INSTALL (WSL Sync)", "INFO")
+    # 1. Run the Push first
+    push_mode(args, creds)
+    print("-" * 40)
+    
+    log("STARTING WSL UPDATE: Pulling from GitHub...", "INFO")
     
     wsl_user = creds["deadlygraphics"]["wsl_user"]
-    wsl_dir = creds["deadlygraphics"]["paths"]["wsl_app_dir"]
-    
-    # GitHub setup for WSL
     gh_user = creds["github"]["user"]
     repo_name = creds["deadlygraphics"]["repo_name"]
-    # We use the public HTTP URL for pulling in WSL to avoid putting the token in bash history
-    # unless it's a private repo, in which case we might need the token.
-    repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
-
-    bash_setup = f"""
-    set -e
-    APP_DIR="{wsl_dir}"
     
-    echo "--> Setting up $APP_DIR..."
-    mkdir -p "$APP_DIR"
-    cd "$APP_DIR"
-
-    echo "--> Syncing GitHub..."
-    if [ -d .git ]; then
-        git pull
-    else
-        git clone "{repo_url}" .
-    fi
+    # Where the repo lives inside WSL
+    wsl_repo_root = f"/home/{wsl_user}/workspace/{repo_name}"
     
-    chmod +x *.py
+    # We use the public HTTPS url for pulling inside WSL to avoid token issues
+    public_repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
-    echo "--> Checking System Dependencies..."
-    sudo apt-get update > /dev/null
-    sudo apt-get install -y python3 python3-pip python3-venv unzip wget > /dev/null
+    # This BASH script runs INSIDE WSL
+    # It does NOT look at Windows drives. It looks at GitHub.
+    bash_commands = f"""
+set -e
+echo "--> Target: {wsl_repo_root}"
 
-    if ! command -v google-chrome &> /dev/null; then
-        echo "   Installing Chrome (required for scrapers)..."
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list'
-        sudo apt-get update > /dev/null
-        sudo apt-get install -y google-chrome-stable > /dev/null
-    fi
+# 1. Ensure Directory Exists
+if [ ! -d "{wsl_repo_root}" ]; then
+    echo "--> Cloning repo from GitHub..."
+    mkdir -p "{wsl_repo_root}"
+    git clone "{public_repo_url}" "{wsl_repo_root}"
+else
+    echo "--> Pulling latest changes from GitHub..."
+    cd "{wsl_repo_root}"
+    git pull
+fi
 
-    echo "--> Updating Python Environment..."
-    if [ ! -d "venv" ]; then python3 -m venv venv; fi
-    source venv/bin/activate
-    pip install --upgrade pip > /dev/null
-    pip install yt-dlp tqdm requests beautifulsoup4 selenium undetected-chromedriver selenium-wire > /dev/null
+# 2. Setup Dependencies
+cd "{wsl_repo_root}"
+if [ ! -d "venv" ]; then
+    echo "--> Creating Virtual Environment..."
+    # Attempt to install venv if missing (might ask for password)
+    python3 -m venv venv || (sudo apt-get update && sudo apt-get install -y python3-venv && python3 -m venv venv)
+fi
 
-    echo "✅ WSL Update Complete!"
-    """
-    
+source venv/bin/activate
+echo "--> Installing Python Libraries..."
+pip install --quiet --upgrade pip
+pip install --quiet yt-dlp tqdm requests beautifulsoup4 selenium undetected-chromedriver selenium-wire
+
+echo "--> WSL Sync Complete!"
+"""
+
+    # --- CRITICAL FIX ---
+    # We strip Windows CR (\r) characters so Linux doesn't crash
+    clean_bash = "\n".join(bash_commands.splitlines())
+
     try:
-        subprocess.run(["wsl", "-u", wsl_user, "bash"], input=bash_setup, text=True, check=True)
+        # We run wsl.exe with --cd ~
+        # This ensures it starts in the Linux Home, NOT on the H: drive.
+        subprocess.run(
+            ["wsl", "-u", wsl_user, "--cd", "~", "bash"], 
+            input=clean_bash, 
+            text=True, 
+            encoding='utf-8', 
+            check=True
+        )
+        log("WSL Update Finished Successfully", "SUCCESS")
     except subprocess.CalledProcessError:
-        log("WSL installation failed.", "ERROR")
+        log("WSL Update Failed", "ERROR")
 
 def main():
-    # Load credentials first
     creds = load_credentials()
-
-    parser = argparse.ArgumentParser(description="Deadly Graphics Manager")
-    parser.add_argument("mode", choices=["push", "install"], help="Action to perform")
-    parser.add_argument("file_path", nargs="?", help="Path to script (Required for push)")
-    parser.add_argument("--name", dest="target_name", help="Custom filename in Repo")
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=["push", "install"])
+    parser.add_argument("file_path", nargs="?")
+    parser.add_argument("--name", dest="target_name")
     args = parser.parse_args()
 
-    if args.mode == "push":
-        push_mode(args, creds)
-    elif args.mode == "install":
-        install_mode(args, creds)
+    if args.mode == "push": push_mode(args, creds)
+    elif args.mode == "install": install_mode(args, creds)
 
 if __name__ == "__main__":
     main()
