@@ -1,6 +1,6 @@
 # Script Name: DG_ScriptsBackup.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Cross-platform manager. Windows pushes to GitHub. Linux pulls from GitHub with auto-repair.
+# Description: Cross-platform manager. Windows pushes. Linux pulls, version-backups files, and sets up apps.
 
 import os
 import sys
@@ -9,18 +9,16 @@ import subprocess
 import argparse
 import json
 import platform
-import time
+import datetime
 from pathlib import Path
 
 # --- Configuration ---
 IS_WINDOWS = os.name == 'nt'
 
 if IS_WINDOWS:
-    # Windows Paths
     CREDENTIALS_FILE = r"C:\credentials\credentials.json"
     DEFAULT_SCRIPT = r"H:\My Drive\AI\DG_videoscraper.py"
 else:
-    # WSL/Linux Paths
     CREDENTIALS_FILE = "/mnt/c/credentials/credentials.json"
     DEFAULT_SCRIPT = "DG_videoscraper.py"
 
@@ -29,8 +27,7 @@ def log(msg, level="INFO"):
 
 def load_credentials():
     if not os.path.exists(CREDENTIALS_FILE):
-        log(f"Missing Credentials: {CREDENTIALS_FILE}", "FAIL")
-        sys.exit(1)
+        log(f"Missing Credentials: {CREDENTIALS_FILE}", "FAIL"); sys.exit(1)
     try:
         with open(CREDENTIALS_FILE, 'r') as f: return json.load(f)
     except Exception as e:
@@ -93,12 +90,11 @@ def pull_mode(args, creds):
 
     log("STARTING PULL: GitHub -> WSL...", "INFO")
     
-    script_name = args.file_path if args.file_path else DEFAULT_SCRIPT
-    script_name = os.path.basename(script_name)
+    script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
     
     # --- PATH LOGIC ---
+    wsl_user = creds["deadlygraphics"]["wsl_user"]
     repo_name = creds["deadlygraphics"]["repo_name"]
-    # The Workspace Root is where the .git folder lives
     workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
     
     # Destination logic
@@ -110,54 +106,73 @@ def pull_mode(args, creds):
         dest_folder = os.path.join(workspace_root, "ai", "apps", app_folder)
         is_app = True
 
-    # 1. Update Repo (With Self-Healing)
+    # 1. Update Repo (Clone/Pull)
     gh_user = creds["github"]["user"]
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
     
-    # HEALING LOGIC: If folder exists but is NOT a git repo, rename it to backup
-    if os.path.exists(workspace_root) and not os.path.exists(os.path.join(workspace_root, ".git")):
-        backup_name = f"{workspace_root}_backup_{int(time.time())}"
-        log(f"Folder exists but is not a Git repo. Moving to {backup_name}...", "WARN")
-        shutil.move(workspace_root, backup_name)
-
-    # Now standard clone/pull logic
     if not os.path.exists(workspace_root):
         os.makedirs(workspace_root, exist_ok=True)
         run_command(f'git clone "{repo_url}" .', cwd=workspace_root)
     else:
-        run_command('git pull', cwd=workspace_root)
+        if not os.path.exists(os.path.join(workspace_root, ".git")):
+             # If folder exists but isn't git, we assume it's broken or just a folder.
+             # We clone into a temp var or just try init. Simplest is clone if empty.
+             # User specifically asked NOT to backup entire folders like before.
+             # We will try to pull if possible, or just skip git update if it's messy and rely on file copy.
+             log(f"Warning: {workspace_root} is not a git repo. Skipping git pull.", "WARN")
+        else:
+             run_command('git pull', cwd=workspace_root)
 
-    # 2. Copy file from Repo Root to Destination
+    # 2. FILE BACKUP & INSTALL
     os.makedirs(dest_folder, exist_ok=True)
     src = os.path.join(workspace_root, script_name)
     dst = os.path.join(dest_folder, script_name)
     
     if os.path.exists(src):
+        # --- VERSION BACKUP LOGIC ---
+        if os.path.exists(dst):
+            old_dir = os.path.join(dest_folder, "old")
+            os.makedirs(old_dir, exist_ok=True)
+            
+            # Create Timestamped Filename: Name_YYYY_MM_DD_HHhr_MMm.py
+            timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%Hhr_%Mm")
+            name, ext = os.path.splitext(script_name)
+            backup_name = f"{name}_{timestamp}{ext}"
+            backup_path = os.path.join(old_dir, backup_name)
+            
+            shutil.copy2(dst, backup_path)
+            log(f"Backed up old version to: {backup_path}", "INFO")
+
+        # Overwrite File
         shutil.copy2(src, dst)
         run_command(f'chmod +x "{dst}"')
-        log(f"Installed to: {dst}", "SUCCESS")
+        log(f"Installed updated file to: {dst}", "SUCCESS")
     else:
-        log(f"Script {script_name} not found in repo root. Did you push it?", "FAIL")
+        log(f"Script {script_name} not found in repo root.", "FAIL")
         sys.exit(1)
 
-    # 3. Setup Dependencies (ONLY for Apps)
+    # 3. Create Checklist File (If missing)
+    if is_app and "scraper" in script_name:
+        checklist_path = os.path.join(dest_folder, "scrapervideo_checklist.txt")
+        if not os.path.exists(checklist_path):
+            with open(checklist_path, "w") as f:
+                f.write("# Paste URLs here (one per line)\n")
+            log(f"Created checklist file: {checklist_path}", "SUCCESS")
+
+    # 4. Dependencies
     if is_app:
-        log("Checking App Dependencies...", "INFO")
+        log("Checking Dependencies...", "INFO")
         venv_dir = os.path.join(dest_folder, "venv")
         
-        # Venv creation
         if not os.path.exists(venv_dir):
             try:
-                # We assume python3-venv is installed. If not, user sees error.
                 run_command(f"{sys.executable} -m venv venv", cwd=dest_folder)
             except:
-                log("Venv creation failed. Try running: sudo apt-get install python3-venv", "WARN")
+                log("Venv failed. Try: sudo apt install python3-venv", "WARN")
 
-        # Pip Install
         pip = os.path.join(venv_dir, "bin", "pip")
         if os.path.exists(pip):
             run_command(f'"{pip}" install --quiet --upgrade pip')
-            # Standard dependencies
             run_command(f'"{pip}" install --quiet yt-dlp tqdm requests beautifulsoup4 selenium undetected-chromedriver selenium-wire')
     
     log("WSL Update Complete!", "SUCCESS")
