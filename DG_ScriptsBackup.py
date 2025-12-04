@@ -1,6 +1,6 @@
 # Script Name: DG_ScriptsBackup.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Cross-platform manager. Windows pushes. Linux pulls using Token for Git and Interactive Sudo for installs.
+# Description: Cross-platform manager. Windows pushes. Linux pulls interactively (Fixes Sudo password issue).
 
 import os
 import sys
@@ -33,6 +33,7 @@ def load_credentials():
         log(f"Config Error: {e}", "FAIL"); sys.exit(1)
 
 def run_command(command, cwd=None):
+    # shell=True ensures commands run like you typed them in terminal
     try:
         subprocess.run(command, cwd=cwd, shell=True, check=True)
     except subprocess.CalledProcessError:
@@ -81,14 +82,12 @@ def push_mode(args, creds):
     else:
         log("No changes to push.", "WARN")
 
-# --- LINUX: PULL FROM GITHUB ---
+# --- LINUX: PULL FROM GITHUB (DIRECT EXECUTION) ---
 def pull_mode(args, creds):
     if IS_WINDOWS:
         log("Pull mode is for Linux/WSL only.", "FAIL"); sys.exit(1)
 
     log("STARTING PULL: GitHub -> WSL...", "INFO")
-    
-    wsl_user = creds["deadlygraphics"]["wsl_user"]
     
     script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
     
@@ -103,111 +102,71 @@ def pull_mode(args, creds):
         dest_folder = os.path.join(workspace_root, "ai", "apps", app_folder)
         is_app = True
 
-    # Use Token URL for Git (Silent Auth)
     gh_user = creds["github"]["user"]
-    token = creds["github"].get("token", "").strip()
-    repo_url = f"https://{token}@github.com/{gh_user}/{repo_name}.git"
+    repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
-    # Bash Script: Standard sudo usage (Interactive)
-    bash_content = f"""#!/bin/bash
-set -e
-REPO_DIR="{workspace_root}"
-DEST_DIR="{dest_folder}"
-SCRIPT_NAME="{script_name}"
+    # 1. Update Repo
+    log(f"Updating Repo at {workspace_root}...", "INFO")
+    if not os.path.exists(workspace_root):
+        os.makedirs(workspace_root, exist_ok=True)
+        run_command(f'git clone "{repo_url}" .', cwd=workspace_root)
+    else:
+        if not os.path.exists(os.path.join(workspace_root, ".git")):
+            # Backup broken folder and re-clone
+            backup = f"{workspace_root}_BACKUP"
+            shutil.move(workspace_root, backup)
+            os.makedirs(workspace_root, exist_ok=True)
+            run_command(f'git clone "{repo_url}" .', cwd=workspace_root)
+        else:
+            run_command('git pull', cwd=workspace_root)
 
-echo "--> Target Repo: $REPO_DIR"
-
-# 1. Update Repo
-if [ ! -d "$REPO_DIR" ]; then
-    echo "--> Cloning repo..."
-    mkdir -p "$REPO_DIR"
-    git clone "{repo_url}" "$REPO_DIR"
-else
-    if [ ! -d "$REPO_DIR/.git" ]; then
-        echo "--> Repairing non-git folder..."
-        mv "$REPO_DIR" "$REPO_DIR_BACKUP_$(date +%s)"
-        git clone "{repo_url}" "$REPO_DIR"
-    else
-        echo "--> Pulling latest..."
-        cd "$REPO_DIR"
-        git pull
-    fi
-fi
-
-# 2. File Install & Backup
-mkdir -p "$DEST_DIR"
-SRC="$REPO_DIR/$SCRIPT_NAME"
-DST="$DEST_DIR/$SCRIPT_NAME"
-
-if [ -f "$SRC" ]; then
-    if [ -f "$DST" ]; then
-        mkdir -p "$DEST_DIR/old"
-        cp "$DST" "$DEST_DIR/old/$SCRIPT_NAME.$(date +%Y%m%d_%H%M%S).bak"
-    fi
-    cp "$SRC" "$DST"
-    chmod +x "$DST"
-    echo "--> Installed $SCRIPT_NAME"
-else
-    echo "❌ Error: $SCRIPT_NAME not found in repo root!"
-    exit 1
-fi
-
-# 3. Config Generation
-if [[ "$SCRIPT_NAME" == *"scraper"* ]]; then
-    CHECKLIST="$DEST_DIR/scrapervideo_checklist.txt"
-    if [ ! -f "$CHECKLIST" ]; then
-        echo "# Paste URLs here (one per line)" > "$CHECKLIST"
-        echo "--> Created checklist: $CHECKLIST"
-    fi
-fi
-
-# 4. Dependencies (Apps Only)
-if [[ "{str(is_app).lower()}" == "true" ]]; then
-    cd "$DEST_DIR"
+    # 2. File Install
+    os.makedirs(dest_folder, exist_ok=True)
+    src = os.path.join(workspace_root, script_name)
+    dst = os.path.join(dest_folder, script_name)
     
-    echo "--> Checking Dependencies..."
-    # Standard interactive sudo. If these need to run, they will prompt you.
-    sudo apt-get update > /dev/null
-    sudo apt-get install -y python3 python3-pip python3-venv unzip wget ffmpeg > /dev/null
-    
-    if ! command -v opera &> /dev/null; then
-        echo "--> Installing Opera (Sudo Password Required)..."
-        wget -q -O - https://deb.opera.com/archive.key | sudo apt-key add -
-        sudo sh -c 'echo "deb https://deb.opera.com/opera-stable/ stable non-free" > /etc/apt/sources.list.d/opera-stable.list'
-        sudo apt-get update > /dev/null
-        sudo apt-get install -y opera-stable > /dev/null
-    fi
+    if os.path.exists(src):
+        # Simple copy
+        shutil.copy2(src, dst)
+        run_command(f'chmod +x "{dst}"')
+        log(f"Installed {script_name}", "SUCCESS")
+    else:
+        log(f"Script {script_name} not found in repo root!", "FAIL")
+        sys.exit(1)
 
-    # Venv & Pip
-    if [ ! -d "venv" ]; then
-        python3 -m venv venv
-    fi
-    
-    source venv/bin/activate
-    echo "--> Installing Python Libs..."
-    # Includes blinker fix
-    pip install --quiet --upgrade pip
-    pip install --quiet setuptools "blinker<1.8.0" webdriver-manager yt-dlp tqdm requests beautifulsoup4 selenium selenium-wire undetected-chromedriver
-fi
+    # 3. Configs (Scraper only)
+    if "scraper" in script_name:
+        checklist = os.path.join(dest_folder, "scrapervideo_checklist.txt")
+        if not os.path.exists(checklist):
+             with open(checklist, "w") as f: f.write("# URLs here\n")
 
-echo "--> DONE! Run with: ./venv/bin/python $SCRIPT_NAME"
-"""
-
-    # Native Linux Execution
-    temp_script = f"/tmp/dg_install_{script_name}.sh"
-    try:
-        with open(temp_script, "w") as f:
-            f.write(bash_content)
+    # 4. Dependencies (DIRECT SHELL EXECUTION)
+    # This ensures sudo works interactively
+    if is_app:
+        log("Checking Dependencies...", "INFO")
         
-        # Run bash directly. It will attach to your terminal for password input.
-        subprocess.run(["bash", temp_script], check=True)
-        log("Update Successful", "SUCCESS")
+        # Run sudo commands directly. They will prompt user in terminal.
+        subprocess.run("sudo apt-get update", shell=True)
+        subprocess.run("sudo apt-get install -y python3 python3-pip python3-venv unzip wget ffmpeg", shell=True)
         
-    except Exception as e:
-        log(f"Update Failed: {e}", "FAIL")
-    finally:
-        if os.path.exists(temp_script):
-            os.remove(temp_script)
+        if not shutil.which("opera"):
+             print("\n[INFO] Installing Opera (May ask for password)...")
+             subprocess.run("wget -q -O - https://deb.opera.com/archive.key | sudo apt-key add -", shell=True)
+             subprocess.run("sudo sh -c 'echo \"deb https://deb.opera.com/opera-stable/ stable non-free\" > /etc/apt/sources.list.d/opera-stable.list'", shell=True)
+             subprocess.run("sudo apt-get update", shell=True)
+             subprocess.run("sudo apt-get install -y opera-stable", shell=True)
+
+        # Venv & Pip
+        venv_dir = os.path.join(dest_folder, "venv")
+        if not os.path.exists(venv_dir):
+             run_command(f"{sys.executable} -m venv venv", cwd=dest_folder)
+             
+        pip = os.path.join(venv_dir, "bin", "pip")
+        log("Updating Python Libs...", "INFO")
+        run_command(f'"{pip}" install --quiet --upgrade pip')
+        run_command(f'"{pip}" install --quiet setuptools "blinker<1.8.0" webdriver-manager yt-dlp tqdm requests beautifulsoup4 selenium selenium-wire undetected-chromedriver')
+
+    log("Done!", "SUCCESS")
 
 def install_mode(args, creds):
     push_mode(args, creds)
