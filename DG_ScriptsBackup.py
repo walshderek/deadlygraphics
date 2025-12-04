@@ -1,6 +1,6 @@
 # Script Name: DG_ScriptsBackup.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Cross-platform manager. Windows pushes. Linux pulls. Fixed NameError.
+# Description: Cross-platform manager. Windows pushes. Linux pulls with Robust Venv repair.
 
 import os
 import sys
@@ -9,7 +9,6 @@ import subprocess
 import argparse
 import json
 import platform
-import datetime
 from pathlib import Path
 
 # --- Configuration ---
@@ -18,11 +17,9 @@ IS_WINDOWS = os.name == 'nt'
 if IS_WINDOWS:
     CREDENTIALS_FILE = r"C:\credentials\credentials.json"
     DEFAULT_SCRIPT = r"H:\My Drive\AI\DG_videoscraper.py"
-    BRIDGE_DIR = r"H:\My Drive\AI" 
 else:
     CREDENTIALS_FILE = "/mnt/c/credentials/credentials.json"
     DEFAULT_SCRIPT = "DG_videoscraper.py"
-    BRIDGE_DIR = "/mnt/h/My Drive/AI"
 
 def log(msg, level="INFO"):
     print(f"[{level}] {msg}")
@@ -60,35 +57,34 @@ def push_mode(args, creds):
     
     # Validate Source
     if not source_path.exists():
-        log(f"Path not found: {source_path}", "FAIL"); sys.exit(1)
+        # Try looking in current dir if absolute path fails
+        if (Path.cwd() / args.file_path).exists():
+             source_path = Path.cwd() / args.file_path
+        else:
+             log(f"File not found: {source_path}", "FAIL"); sys.exit(1)
 
-    # Use source name as target
     target_name = args.target_name if args.target_name else source_path.name
     dest_path = repo_path / target_name
 
     log(f"Source: {source_path}", "INFO")
-    log(f"Type: {'FOLDER' if source_path.is_dir() else 'FILE'}", "INFO")
 
-    # 1. Clone/Init
+    # Git Operations
     url = get_remote_url(creds)
     if not repo_path.exists():
         run_command(f'git clone "{url}" "{repo_path}"')
 
-    # 2. Config
     email = creds["github"]["email"]
     user = creds["github"]["user"]
     run_command(f'git config user.email "{email}"', cwd=repo_path)
     run_command(f'git config user.name "{user}"', cwd=repo_path)
     run_command(f'git remote set-url origin "{url}"', cwd=repo_path)
 
-    # 3. Copy Logic (Handles Folders & Files)
     if source_path.is_dir():
         if dest_path.exists(): shutil.rmtree(dest_path)
         shutil.copytree(source_path, dest_path, ignore=shutil.ignore_patterns('venv', '__pycache__', '.git', '*.pyc'))
     else:
         shutil.copy2(source_path, dest_path)
 
-    # 4. Push (Force Add All)
     run_command(f'git add --all "{target_name}"', cwd=repo_path)
     
     status = subprocess.run('git status --porcelain', cwd=repo_path, capture_output=True, text=True, shell=True)
@@ -99,29 +95,26 @@ def push_mode(args, creds):
     else:
         log("No changes to push.", "WARN")
 
-# --- LINUX: PULL & INSTALL ---
+# --- LINUX: PULL FROM GITHUB ---
 def pull_mode(args, creds):
     if IS_WINDOWS:
         log("Pull mode is for Linux/WSL only.", "FAIL"); sys.exit(1)
 
     log("STARTING PULL: GitHub -> WSL...", "INFO")
     
-    wsl_user = creds["deadlygraphics"]["wsl_user"]
-    wsl_pass = creds["deadlygraphics"].get("wsl_password", "")
-    
-    # --- FIX: Define these variables unconditionally first ---
-    input_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
-    
-    # Normalize App Name (Remove .py extension for folder naming)
-    app_name = os.path.splitext(input_name)[0]
-    
-    is_folder = not input_name.endswith(".py")
-    
-    # Paths
+    # Path Logic
+    script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
+    if script_name.endswith(".py"):
+        app_name = os.path.splitext(script_name)[0]
+        is_folder = False
+    else:
+        app_name = script_name
+        is_folder = True
+
     repo_name = creds["deadlygraphics"]["repo_name"]
     workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
     
-    if "DG_ScriptsBackup" in input_name:
+    if "DG_ScriptsBackup" in script_name:
         dest_folder = os.path.join(workspace_root, "ai", "scripts")
         is_app = False
     else:
@@ -131,17 +124,16 @@ def pull_mode(args, creds):
     gh_user = creds["github"]["user"]
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
-    # Bash Script using raw string r"""..."""
+    # Bash Installer (With Venv Fix)
     bash_content = r"""#!/bin/bash
 set -e
 """ + f"""
 REPO_DIR="{workspace_root}"
 DEST_DIR="{dest_folder}"
-INPUT_NAME="{input_name}"
+INPUT_NAME="{script_name}"
 APP_NAME="{app_name}"
 IS_APP="{str(is_app).lower()}"
 IS_FOLDER="{str(is_folder).lower()}"
-SUDO_PASS="{wsl_pass}"
 
 echo "--> Repo: $REPO_DIR"
 
@@ -161,13 +153,12 @@ fi
 
 # 2. Install Logic
 mkdir -p "$DEST_DIR"
-# Find source case-insensitively
 SRC=$(find "$REPO_DIR" -maxdepth 1 -iname "$INPUT_NAME" | head -n 1)
 
 if [ -e "$SRC" ]; then
     echo "--> Installing from $SRC..."
     
-    # Backup if exists
+    # Backup
     if [ -d "$DEST_DIR" ]; then
         if [ "$(ls -A $DEST_DIR)" ]; then
              mkdir -p "$DEST_DIR/../old"
@@ -180,7 +171,6 @@ if [ -e "$SRC" ]; then
     else
         cp "$SRC" "$DEST_DIR/"
     fi
-    
     chmod +x "$DEST_DIR"/*.py 2>/dev/null || true
 else
     echo "❌ Error: '$INPUT_NAME' not found in repo!"
@@ -199,19 +189,21 @@ fi
 if [[ "$IS_APP" == "true" ]]; then
     cd "$DEST_DIR"
     
-    echo "--> Checking Dependencies..."
-    sudo apt-get update > /dev/null
-    sudo apt-get install -y python3 python3-pip python3-venv unzip wget ffmpeg > /dev/null
-
-    # Chrome Check
-    if ! command -v google-chrome &> /dev/null; then
-        echo "--> Installing Chrome..."
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list'
-        sudo apt-get update > /dev/null; sudo apt-get install -y google-chrome-stable > /dev/null
+    # --- VENV REPAIR LOGIC ---
+    # If active file is missing, nuke and rebuild
+    if [ ! -f "venv/bin/activate" ]; then
+        echo "--> Venv missing or broken. Recreating..."
+        rm -rf venv
+        
+        # Try creating venv
+        if ! python3 -m venv venv; then
+             echo "--> Venv creation failed. Attempting to install python3-venv..."
+             # Interactive Sudo for install
+             sudo apt-get update && sudo apt-get install -y python3-venv
+             python3 -m venv venv
+        fi
     fi
-    
-    if [ ! -d "venv" ]; then python3 -m venv venv; fi
+
     source venv/bin/activate
     
     echo "--> Updating Python Libs..."
@@ -220,10 +212,7 @@ if [[ "$IS_APP" == "true" ]]; then
 
     # 5. Global Shortcut
     MAIN_SCRIPT=$(find "$DEST_DIR" -maxdepth 1 -iname "$APP_NAME.py" | head -n 1)
-    if [ -z "$MAIN_SCRIPT" ]; then
-         MAIN_SCRIPT=$(find "$DEST_DIR" -maxdepth 1 -iname "$(echo $APP_NAME | tr '[:upper:]' '[:lower:]').py" | head -n 1)
-    fi
-
+    
     if [ -f "$MAIN_SCRIPT" ]; then
         LAUNCHER="/usr/local/bin/$APP_NAME"
         echo "--> Creating launcher: $LAUNCHER"
@@ -234,9 +223,17 @@ source venv/bin/activate
 python3 "$MAIN_SCRIPT" "\$@"
 EOF
         chmod +x /tmp/$APP_NAME.launcher
-        sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER"
-        sudo chmod +x "$LAUNCHER"
-        echo "✅ Shortcut created! Run '$APP_NAME' from anywhere."
+        
+        # Move launcher (requires sudo)
+        if [ ! -f "$LAUNCHER" ]; then
+             echo "--> Please enter password to create global shortcut:"
+             sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER"
+             sudo chmod +x "$LAUNCHER"
+        else
+             # If exists, try update silently, fail gracefully if no perm
+             sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER" 2>/dev/null || true
+        fi
+        echo "✅ Shortcut updated: $APP_NAME"
     fi
 fi
 
@@ -264,7 +261,6 @@ def main():
     parser.add_argument("mode", choices=["push", "pull", "install"])
     parser.add_argument("file_path", nargs="?")
     parser.add_argument("--name", dest="target_name")
-    parser.add_argument("--folder", dest="wsl_folder")
     args = parser.parse_args()
 
     if args.mode == "push": push_mode(args, creds)
