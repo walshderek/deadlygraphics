@@ -87,7 +87,7 @@ def push_mode(args, creds):
 
 # --- LINUX: PULL & INSTALL APP ---
 def pull_mode(args, creds):
-    log("STARTING PULL: Updating Code...", "INFO")
+    log("STARTING PULL: GitHub -> Linux...", "INFO")
     
     wsl_user = creds["deadlygraphics"]["wsl_user"]
     wsl_pass = creds["deadlygraphics"].get("wsl_password", "")
@@ -111,7 +111,7 @@ def pull_mode(args, creds):
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
     # Bash Script: Handles Pulling, Isolating, Venv, and Shortcutting
-    # Using raw string r"""...""" to prevent escape sequence warnings
+    # Note: using raw strings r""" to prevent escape warnings
     bash_content = r"""#!/bin/bash
 set -e
 """ + f"""
@@ -207,9 +207,9 @@ EOF
 fi
 """
 
+    # --- EXECUTION LOGIC ---
     if IS_WINDOWS:
-        # --- WINDOWS -> WSL TRIGGER ---
-        # We write to H: bridge and tell WSL to run it
+        # Windows: Use Bridge File
         temp_script_win = r"C:\dg_pull.sh"
         temp_script_wsl = "/mnt/c/dg_pull.sh"
         
@@ -217,24 +217,23 @@ fi
             with open(temp_script_win, "w", newline="\n", encoding="utf-8") as f:
                 f.write(bash_content)
             
-            # Use wsl.exe to bridge execution
+            # Tell WSL to run it
             cmd = ["wsl", "-u", wsl_user, "--cd", "~", "bash", temp_script_wsl]
             subprocess.run(cmd, check=True)
-            log("WSL Update & Install Successful", "SUCCESS")
-            
+            log("WSL Update Successful", "SUCCESS")
         except Exception as e:
             log(f"WSL Install Failed: {e}", "FAIL")
         finally:
             if os.path.exists(temp_script_win):
                 os.remove(temp_script_win)
     else:
-        # --- NATIVE LINUX EXECUTION ---
-        # We are already in Linux! Don't use wsl.exe. Just run bash.
+        # Linux: Run Directly
         temp_script = f"/tmp/dg_install_{script_name}.sh"
         try:
             with open(temp_script, "w") as f:
                 f.write(bash_content)
             
+            # Run natively with bash
             subprocess.run(["bash", temp_script], check=True)
             log("Update Successful", "SUCCESS")
         except Exception as e:
