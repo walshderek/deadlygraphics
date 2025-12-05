@@ -66,6 +66,7 @@ def push_mode(args, creds):
 
     log(f"Source: {source_path}", "INFO")
 
+    # Git Setup
     url = get_remote_url(creds)
     if not repo_path.exists():
         run_command(f'git clone "{url}" "{repo_path}"')
@@ -76,13 +77,16 @@ def push_mode(args, creds):
     run_command(f'git config user.name "{user}"', cwd=repo_path)
     run_command(f'git remote set-url origin "{url}"', cwd=repo_path)
 
+    # Copy Logic
     if source_path.is_dir():
         if dest_path.exists(): shutil.rmtree(dest_path)
         shutil.copytree(source_path, dest_path, ignore=shutil.ignore_patterns('venv', '__pycache__', '.git', '*.pyc'))
     else:
         shutil.copy2(source_path, dest_path)
 
-    run_command(f'git add -A', cwd=repo_path)
+    # Push (Fixes Casing/Git Conflict)
+    log("Staging ALL changes...", "INFO")
+    run_command('git add -A', cwd=repo_path)
     
     status = subprocess.run('git status --porcelain', cwd=repo_path, capture_output=True, text=True, shell=True)
     if status.stdout.strip():
@@ -105,11 +109,9 @@ def pull_mode(args, creds):
     
     if script_name.endswith(".py"):
         app_name = os.path.splitext(script_name)[0]
-        is_folder = False
     else:
         app_name = script_name
-        is_folder = True
-
+    
     repo_name = creds["deadlygraphics"]["repo_name"]
     workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
     
@@ -123,13 +125,12 @@ def pull_mode(args, creds):
     gh_user = creds["github"]["user"]
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
-    # Bash Script (Interactive Sudo)
+    # Bash Script
     bash_content = r"""#!/bin/bash
 set -e
 """ + f"""
 REPO_DIR="{workspace_root}"
 DEST_DIR="{dest_folder}"
-INPUT_NAME="{script_name}"
 APP_NAME="{app_name}"
 IS_APP="{str(is_app).lower()}"
 
@@ -137,16 +138,13 @@ echo "--> Target Repo: $REPO_DIR"
 
 # 1. Update Repo
 if [ ! -d "$REPO_DIR" ]; then
-    echo "--> Cloning repo..."
     mkdir -p "$REPO_DIR"
     git clone "{repo_url}" "$REPO_DIR"
 else
     if [ ! -d "$REPO_DIR/.git" ]; then
-        echo "--> Repairing non-git folder..."
         mv "$REPO_DIR" "$REPO_DIR_BACKUP_$(date +%s)"
         git clone "{repo_url}" "$REPO_DIR"
     else
-        echo "--> Pulling latest..."
         cd "$REPO_DIR"
         git pull
     fi
@@ -154,38 +152,42 @@ fi
 
 # 2. Install Logic
 mkdir -p "$DEST_DIR"
-SRC=$(find "$REPO_DIR" -maxdepth 1 -iname "$INPUT_NAME" | head -n 1)
+SRC=$(find "$REPO_DIR" -maxdepth 1 -iname "$APP_NAME" | head -n 1)
 
 if [ -e "$SRC" ]; then
-    echo "--> Installing files..."
-    if [ "$IS_FOLDER" == "true" ]; then
-        cp -r "$SRC/"* "$DEST_DIR/" 
+    echo "--> Installing files to $DEST_DIR..."
+    
+    # Backup
+    if [ -d "$DEST_DIR" ] && [ "$(ls -A $DEST_DIR)" ]; then
+        mkdir -p "$DEST_DIR/old"
+        tar -czf "$DEST_DIR/old/$APP_NAME.$(date +%Y%m%d_%H%M%S).tar.gz" -C "$DEST_DIR" .
+    fi
+
+    # Copy files
+    if [ -d "$SRC" ]; then
+        cp -r "$SRC/"* "$DEST_DIR/"
     else
-        cp "$SRC" "$DEST_DIR/"
+        cp "$SRC" "$DEST_DIR"
     fi
     chmod +x "$DEST_DIR"/*.py 2>/dev/null || true
 else
-    echo "❌ Error: '$INPUT_NAME' not found in repo!"
+    echo "❌ Error: '$APP_NAME' not found in repo!"
     exit 1
 fi
 
-# 3. Dependencies & Venv Setup (Minimal for Manager)
+# 3. Dependencies
 if [[ "$IS_APP" == "true" ]]; then
     cd "$DEST_DIR"
     
-    echo "--> Checking System Deps (sudo will prompt if needed)..."
-    sudo apt-get update > /dev/null
-    sudo apt-get install -y python3 python3-pip python3-venv unzip wget ffmpeg > /dev/null
-
-    # Venv Repair
+    # Venv Repair (The code needs to be here to work)
     if [ ! -f "venv/bin/activate" ]; then
         echo "--> Creating Venv..."
-        rm -rf venv
-        python3 -m venv venv
+        python3 -m venv venv || (sudo apt-get update && sudo apt-get install -y python3-venv && python3 -m venv venv)
     fi
     
-    # 4. Global Shortcut
+    # 4. Shortcut
     MAIN_SCRIPT=$(find "$DEST_DIR" -maxdepth 1 -iname "$APP_NAME.py" | head -n 1)
+
     if [ -f "$MAIN_SCRIPT" ]; then
         LAUNCHER="/usr/local/bin/$APP_NAME"
         echo "--> Creating launcher: $LAUNCHER"
@@ -196,7 +198,7 @@ source venv/bin/activate
 python3 "$MAIN_SCRIPT" "\$@"
 EOF
         chmod +x /tmp/$APP_NAME.launcher
-        sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER" 
+        sudo mv /tmp/$APP_NAME.launcher "$LAUNCHER"
         sudo chmod +x "$LAUNCHER"
         echo "✅ Shortcut created! Run '$APP_NAME'"
     fi
@@ -207,7 +209,7 @@ echo "--> DONE!"
 
     temp_script = f"/tmp/dg_install_{app_name}.sh"
     try:
-        with open(temp_script, "w") as f: f.write(bash_content)
+        with open(temp_script, "w") as f: subprocess.run(["bash", "-c", f"cat <<EOF > {temp_script}\n{bash_content}EOF"], shell=True, check=True)
         subprocess.run(["bash", temp_script], check=True)
         log("Update Successful", "SUCCESS")
     except Exception as e:
