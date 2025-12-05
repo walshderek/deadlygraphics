@@ -1,6 +1,6 @@
 # Script Name: DG_collect_dataset.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Modular Orchestrator. Calls core modules (Scrape -> Crop -> Caption -> Publish).
+# Description: Modular Dataset Factory. Orchestrates core modules (Scrape -> Crop -> Caption -> Publish).
 
 import sys
 import os
@@ -27,7 +27,7 @@ def check_main_dependencies():
 
 check_main_dependencies()
 
-# --- 3. IMPORT MODULES ---
+# --- 3. DYNAMIC MODULE LOADING ---
 def load_core_module(module_name):
     try:
         return importlib.import_module(module_name)
@@ -55,17 +55,7 @@ def run_pipeline(args):
     
     slug = utils.slugify(args.name)
 
-    all_steps = [1, 2, 3, 4, 5, 6]
-    if args.steps:
-        selected = []
-        for s in args.steps:
-            parts = str(s).split(',')
-            for p in parts:
-                if '-' in p:
-                    start, end = map(int, p.split('-'))
-                    selected.extend(range(start, end + 1))
-                else: selected.append(int(p))
-        all_steps = selected
+    all_steps = [1, 2, 3, 4, 5, 6] # Default steps
 
     # Step 1: Scrape
     if 1 in all_steps:
@@ -108,7 +98,6 @@ if __name__ == "__main__":
     parser.add_argument("--trigger", default="ohwx", help="Trigger word")
     parser.add_argument("--model", choices=["moondream", "qwen"], default="moondream", help="LLM Model")
     parser.add_argument("--style", default="crinklypaper", help="Caption Style")
-    parser.add_argument("--skip_caption", action="store_true", help="Skip captioning")
     parser.add_argument("steps", nargs="*", help="Steps (e.g. 1 3-5)")
     
     args = parser.parse_args()
