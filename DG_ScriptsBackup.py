@@ -66,7 +66,6 @@ def push_mode(args, creds):
 
     log(f"Source: {source_path}", "INFO")
 
-    # Git Setup
     url = get_remote_url(creds)
     if not repo_path.exists():
         run_command(f'git clone "{url}" "{repo_path}"')
@@ -77,15 +76,12 @@ def push_mode(args, creds):
     run_command(f'git config user.name "{user}"', cwd=repo_path)
     run_command(f'git remote set-url origin "{url}"', cwd=repo_path)
 
-    # Copy Logic
     if source_path.is_dir():
         if dest_path.exists(): shutil.rmtree(dest_path)
         shutil.copytree(source_path, dest_path, ignore=shutil.ignore_patterns('venv', '__pycache__', '.git', '*.pyc'))
     else:
         shutil.copy2(source_path, dest_path)
 
-    # Push (Fixes Casing/Git Conflict)
-    log("Staging ALL changes...", "INFO")
     run_command('git add -A', cwd=repo_path)
     
     status = subprocess.run('git status --porcelain', cwd=repo_path, capture_output=True, text=True, shell=True)
@@ -106,12 +102,13 @@ def pull_mode(args, creds):
     wsl_user = creds["deadlygraphics"]["wsl_user"]
     
     script_name = os.path.basename(args.file_path if args.file_path else DEFAULT_SCRIPT)
-    
     if script_name.endswith(".py"):
         app_name = os.path.splitext(script_name)[0]
+        is_folder = False
     else:
         app_name = script_name
-    
+        is_folder = True
+
     repo_name = creds["deadlygraphics"]["repo_name"]
     workspace_root = os.path.expanduser(f"~/workspace/{repo_name}")
     
@@ -126,11 +123,12 @@ def pull_mode(args, creds):
     repo_url = f"https://github.com/{gh_user}/{repo_name}.git"
 
     # Bash Script
-    bash_content = r"""#!/bin/bash
+    bash_content = f"""#!/bin/bash
 set -e
-""" + f"""
+
 REPO_DIR="{workspace_root}"
 DEST_DIR="{dest_folder}"
+INPUT_NAME="{script_name}"
 APP_NAME="{app_name}"
 IS_APP="{str(is_app).lower()}"
 
@@ -152,26 +150,26 @@ fi
 
 # 2. Install Logic
 mkdir -p "$DEST_DIR"
-SRC=$(find "$REPO_DIR" -maxdepth 1 -iname "$APP_NAME" | head -n 1)
+SRC=$(find "$REPO_DIR" -maxdepth 1 -iname "$INPUT_NAME" | head -n 1)
 
 if [ -e "$SRC" ]; then
     echo "--> Installing files to $DEST_DIR..."
     
-    # Backup
-    if [ -d "$DEST_DIR" ] && [ "$(ls -A $DEST_DIR)" ]; then
-        mkdir -p "$DEST_DIR/old"
-        tar -czf "$DEST_DIR/old/$APP_NAME.$(date +%Y%m%d_%H%M%S).tar.gz" -C "$DEST_DIR" .
+    if [ -d "$DEST_DIR" ]; then
+        if [ "$(ls -A $DEST_DIR)" ]; then
+             mkdir -p "$DEST_DIR/old"
+             tar -czf "$DEST_DIR/old/$APP_NAME.$(date +%Y%m%d_%H%M%S).tar.gz" -C "$DEST_DIR" .
+        fi
     fi
 
-    # Copy files
     if [ -d "$SRC" ]; then
         cp -r "$SRC/"* "$DEST_DIR/"
     else
-        cp "$SRC" "$DEST_DIR"
+        cp "$SRC" "$DEST_DIR/"
     fi
     chmod +x "$DEST_DIR"/*.py 2>/dev/null || true
 else
-    echo "❌ Error: '$APP_NAME' not found in repo!"
+    echo "❌ Error: '$INPUT_NAME' not found in repo!"
     exit 1
 fi
 
@@ -179,10 +177,13 @@ fi
 if [[ "$IS_APP" == "true" ]]; then
     cd "$DEST_DIR"
     
-    # Venv Repair (The code needs to be here to work)
+    echo "--> Checking Dependencies..."
+    # We do NOT use 'sudo apt-get install' here. That is manual.
+    
+    # Venv Repair
     if [ ! -f "venv/bin/activate" ]; then
         echo "--> Creating Venv..."
-        python3 -m venv venv || (sudo apt-get update && sudo apt-get install -y python3-venv && python3 -m venv venv)
+        python3 -m venv venv || (echo '❌ VENV FAILED. Run: sudo apt install python3-venv' && exit 1)
     fi
     
     # 4. Shortcut
@@ -209,7 +210,7 @@ echo "--> DONE!"
 
     temp_script = f"/tmp/dg_install_{app_name}.sh"
     try:
-        with open(temp_script, "w") as f: subprocess.run(["bash", "-c", f"cat <<EOF > {temp_script}\n{bash_content}EOF"], shell=True, check=True)
+        with open(temp_script, "w") as f: f.write(bash_content)
         subprocess.run(["bash", temp_script], check=True)
         log("Update Successful", "SUCCESS")
     except Exception as e:
@@ -228,7 +229,6 @@ def main():
     parser.add_argument("mode", choices=["push", "pull", "install"])
     parser.add_argument("file_path", nargs="?")
     parser.add_argument("--name", dest="target_name")
-    parser.add_argument("--folder", dest="wsl_folder")
     args = parser.parse_args()
 
     if args.mode == "push": push_mode(args, creds)
