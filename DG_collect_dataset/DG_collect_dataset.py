@@ -1,6 +1,6 @@
 # Script Name: DG_collect_dataset.py
 # Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Modular Dataset Factory. Orchestrates core modules (Scrape -> Crop -> Caption -> Publish).
+# Description: Modular Orchestrator. Calls core modules (Scrape -> Crop -> Caption -> Publish).
 
 import sys
 import os
@@ -35,10 +35,11 @@ def load_core_module(module_name):
         print(f"❌ Error importing 'core/{module_name}.py': {e}")
         sys.exit(1)
 
-try: import utils 
+try:
+    import utils 
 except ImportError:
-    try: import core.utils as utils
-    except: pass
+    print(f"❌ CRITICAL: Could not find 'core/utils.py'.")
+    sys.exit(1)
 
 # Load Steps
 mod_scrape     = load_core_module("01_setup_scrape")
@@ -79,7 +80,6 @@ def run_pipeline(args):
 
     # Step 3: Caption
     if 3 in all_steps:
-        if args.skip_caption: print("\n=== 03: CAPTION (Skipped by user) ==="); return
         print("\n=== 03: CAPTION ===")
         mod_caption.run(slug, trigger_word=args.trigger, model_name=args.model, style=args.style)
 
