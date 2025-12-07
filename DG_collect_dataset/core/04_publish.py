@@ -60,6 +60,7 @@ accelerate launch --num_processes 1 "wan_train_network.py" ^
   --save_every_n_epochs 5 ^
   --t5 "%T5%" ^
   --vae "%VAE%" ^
+  --vae_dtype float16 ^
   --timestep_boundary 875 ^
   --timestep_sampling logsnr ^
   --vae_cache_cpu ^
@@ -142,18 +143,15 @@ def run(slug):
     
     win_toml_c_path = f"{utils.MUSUBI_PATHS['win_app']}\\TOML\\{toml_win_name}"
     
-    # Write Local Copies
     with open(publish_root / toml_win_name, "w") as f:
         f.write(generate_toml(win_unc_img_path, TARGET_RES))
     
     with open(publish_root / bat_win_name, "w") as f:
         f.write(generate_bat(slug, win_toml_c_path))
     
-    # Write to Windows UNC
-    win_toml_dest = Path(f"{utils.get_windows_unc_path(str(Path(utils.MUSUBI_PATHS['wsl_app']) / 'TOML'))}\\{toml_win_name}".replace("/", "\\"))
-    win_bat_dest = Path(f"{utils.get_windows_unc_path(str(Path(utils.MUSUBI_PATHS['wsl_app']) / 'BAT'))}\\{bat_win_name}".replace("/", "\\"))
-    
     try:
+        win_toml_dest = Path(f"{utils.get_windows_unc_path(str(Path(utils.MUSUBI_PATHS['wsl_app']) / 'TOML'))}\\{toml_win_name}".replace("/", "\\"))
+        win_bat_dest = Path(f"{utils.get_windows_unc_path(str(Path(utils.MUSUBI_PATHS['wsl_app']) / 'BAT'))}\\{bat_win_name}".replace("/", "\\"))
         shutil.copy(publish_root / toml_win_name, win_toml_dest)
         shutil.copy(publish_root / bat_win_name, win_bat_dest)
     except: pass

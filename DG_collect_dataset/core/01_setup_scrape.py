@@ -32,14 +32,16 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         urls = set()
         print(f"--> Scrolling to find {limit} images...")
         
+        # Accumulation Loop Fix
         while len(urls) < limit:
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(1.5)
-            
-            thumbnails = page.query_selector_all("a.iusc")
             prev_count = len(urls)
             
-            # Extract URLs
+            # Scroll
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(2)
+            
+            thumbnails = page.query_selector_all("a.iusc")
+            
             for thumb in thumbnails:
                 if len(urls) >= limit: break
                 m = thumb.get_attribute("m")
@@ -53,19 +55,18 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
             
             print(f"    Found {len(urls)} unique URLs...")
             
-            # Break condition: No new URLs found in this pass
+            # Break logic: If no new URLs found
             if len(urls) == prev_count:
-                # Try clicking "See more images"
                 try:
-                    if page.is_visible('input[value="See more images"]'):
+                    # Click logic with correct selector
+                    if page.is_visible("input[value='See more images']"):
                         print("    Clicking 'See more images'...")
-                        page.click('input[value="See more images"]', timeout=1000)
+                        page.click("input[value='See more images']", timeout=1000)
                         time.sleep(2)
                     else:
-                        # No button and no new images -> End of results
-                        break
+                        break # No button and no new images
                 except:
-                    break
+                    break # Error clicking or button gone
 
         browser.close()
         

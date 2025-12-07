@@ -38,14 +38,13 @@ def run(slug):
             
             face = max(faces, key=lambda x: x['facial_area']['w'] * x['facial_area']['h'])
             
-            # Confidence Check Fix
+            # Confidence Check
             if face['confidence'] < 0.5:
                 continue
                 
             fa = face["facial_area"]
             x, y, w, h = int(fa["x"]), int(fa["y"]), int(fa["w"]), int(fa["h"])
             
-            # Dynamic Zoom 2.0x
             center_x = x + w / 2
             center_y = y + h / 2
             size = int(max(w, h) * 2.0)

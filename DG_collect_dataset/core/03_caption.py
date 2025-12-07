@@ -9,10 +9,12 @@ CAPTION_MODE = "fixed"
 
 def generate_prompt(trigger, mode):
     base = f"The person in this image is named {trigger}. "
+    # Restored RULES
     if mode == "fixed":
         return (f"{base}\nDescribe the image for an AI training dataset.\n"
-                f"RULES:\n1. Start the sentence exactly with '{trigger}, '.\n"
-                f"2. Describe CLOTHING, BACKGROUND, POSE, LIGHTING.\n"
+                f"RULES:\n"
+                f"1. Start the sentence exactly with '{trigger}, '.\n"
+                f"2. Describe CLOTHING, BACKGROUND, POSE, and LIGHTING.\n"
                 f"3. Do NOT describe facial features, makeup, or hairstyle.\n"
                 f"4. Keep it to one concise paragraph.")
     return base + " Describe everything."
@@ -42,13 +44,12 @@ def run(slug, model="moondream"):
             trust_remote_code=True
         ).eval()
     else:
-        # Ping Check Fix
         try:
             ollama_client = ollama.Client(host=OLLAMA_HOST)
             ollama_client.ps()
-            print(f"✅ Connected to Ollama at {OLLAMA_HOST}")
+            print("✅ Connected to Ollama.")
         except Exception as e:
-            print(f"❌ Could not connect to Ollama: {e}")
+            print(f"❌ Ollama connection failed: {e}")
             return
 
     files = [f for f in os.listdir(in_dir) if f.lower().endswith('.jpg')]
@@ -75,7 +76,7 @@ def run(slug, model="moondream"):
         else:
             with open(img_path, "rb") as ifile:
                 b64 = base64.b64encode(ifile.read()).decode('utf-8')
-            # Timeout Fix
+            # Timeout Fix + Exception Handling
             try:
                 res = ollama_client.chat(
                     model='moondream', 
@@ -84,8 +85,8 @@ def run(slug, model="moondream"):
                 )
                 caption = res['message']['content'].replace('\n', ' ').strip()
             except Exception as e:
-                print(f"    ⚠️ Caption error: {e}")
-                continue
+                print(f"    ⚠️ Caption error (Timeout/Fail): {e}")
+                caption = f"{trigger}, a person."
 
         if not caption.startswith(trigger):
             caption = f"{trigger}, {caption}"
@@ -93,5 +94,3 @@ def run(slug, model="moondream"):
         with open(txt_path, "w", encoding="utf-8") as tf:
             tf.write(caption)
         print(f"   [{i}/{len(files)}] Done.")
-    
-    print(f"✅ Captions complete.")
