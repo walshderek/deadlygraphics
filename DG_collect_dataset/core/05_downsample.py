@@ -1,80 +1,56 @@
-"""
-Script Name: 05_downsample.py
-Author: DeadlyGraphics
-Date: 2025-12-06
-"""
-
+import sys
 import os
-from pathlib import Path
-from PIL import Image, ImageOps
+import shutil
+import utils
+from PIL import Image
 
-def run(slug, trigger_word):
-    print(f"=== 05 DOWNSAMPLE: Processing for {slug} ===")
-    
-    base_dir = Path.cwd()
-    
-    # CORRECT INPUT: outputs/slug/03_master_1024
-    master_dir = base_dir / "outputs" / slug / "03_master_1024"
-    
-    # CORRECT OUTPUT: outputs/slug/05_downsample
-    downsample_base = base_dir / "outputs" / slug / "05_downsample"
-    
-    sizes = [1024, 512, 256]
+RESOLUTIONS = [512, 256]
 
-    if not master_dir.exists():
-        print(f"❌ Error: Master directory not found at {master_dir}")
+def run(project_slug):
+    path = utils.get_project_path(project_slug)
+    
+    # Input: Master (1024)
+    in_dir = path / utils.DIRS['master']
+    # Output: Downsample folder
+    down_root = path / utils.DIRS['downsample']
+    # Captions Source: 02_captions
+    caption_dir = path / utils.DIRS['caption']
+    
+    if not in_dir.exists():
+        print("❌ Run Step 4 (Resize) first.")
         return
 
-    # Create 256, 512, 1024 folders and cache folders
-    for size in sizes:
-        (downsample_base / str(size)).mkdir(parents=True, exist_ok=True)
-        (downsample_base / f"{size}_cache").mkdir(parents=True, exist_ok=True)
-
-    images = [f for f in os.listdir(master_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
+    print(f"📉 Downsampling to {RESOLUTIONS}...")
     
-    if not images:
-        print("❌ Error: No images found in master directory.")
-        return
+    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+    
+    for res in RESOLUTIONS:
+        res_dir = down_root / str(res)
+        res_dir.mkdir(parents=True, exist_ok=True)
+        
+        count = 0
+        for f in files:
+            try:
+                # 1. Resize Image (LANCZOS, No Crop)
+                img = Image.open(in_dir / f)
+                img_res = img.resize((res, res), Image.Resampling.LANCZOS)
+                img_res.save(res_dir / f, quality=95)
+                
+                # 2. Copy Caption from Source
+                txt_name = os.path.splitext(f)[0] + ".txt"
+                src_txt = caption_dir / txt_name
+                
+                if src_txt.exists():
+                    shutil.copy(src_txt, res_dir / txt_name)
+                
+                count += 1
+            except Exception as e:
+                print(f"Error {f}: {e}")
+        
+        print(f"   ➜ {res}x{res}: {count} images")
 
-    for img_name in images:
-        img_path = master_dir / img_name
-        txt_name = img_path.stem + ".txt"
-        txt_path = master_dir / txt_name
-
-        try:
-            with Image.open(img_path) as img:
-                img = img.convert("RGB")
-
-                # --- TRIGGER WORD INJECTION ---
-                final_caption = ""
-                if txt_path.exists():
-                    with open(txt_path, 'r', encoding='utf-8') as f:
-                        existing_caption = f.read().strip()
-                    
-                    if trigger_word and trigger_word.lower() not in existing_caption.lower():
-                        final_caption = f"{trigger_word}, {existing_caption}"
-                    else:
-                        final_caption = existing_caption
-                else:
-                    final_caption = trigger_word
-
-                # Save to 256, 512, 1024 folders
-                for size in sizes:
-                    # Resize
-                    processed_img = ImageOps.fit(img, (size, size), method=Image.Resampling.LANCZOS)
-                    
-                    # Save Image
-                    save_dir = downsample_base / str(size)
-                    processed_img.save(save_dir / img_name, quality=95)
-                    
-                    # Save Text with Trigger Word
-                    with open(save_dir / txt_name, 'w', encoding='utf-8') as f:
-                        f.write(final_caption)
-
-        except Exception as e:
-            print(f"⚠️ Error processing {img_name}: {e}")
-
-    print(f"✅ Downsampling Complete. Folders created at: {downsample_base}")
+    print("✅ Downsampling complete.")
 
 if __name__ == "__main__":
-    run("ed_milliband", "ohwx")
+    if len(sys.argv) > 1:
+        run(sys.argv[1])

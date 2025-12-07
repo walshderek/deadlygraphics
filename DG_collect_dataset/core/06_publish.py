@@ -1,48 +1,47 @@
-"""
-Script Name: 06_publish.py
-Author: DeadlyGraphics
-Date: 2025-12-06
-"""
-
+import sys
 import os
+import utils
+import shutil
 from pathlib import Path
 
-# --- CONFIGURATION ---
-RESOLUTIONS = [256, 512, 1024]
+# --- TEMPLATE GENERATORS ---
 
-# DESTINATIONS: STRICTLY /mnt/c/AI/apps/musubi-tuner/
-DEST_TOML_DIR = Path('/mnt/c/AI/apps/musubi-tuner/files/tomls/')
-DEST_BAT_DIR = Path('/mnt/c/AI/apps/musubi-tuner/')
-
-def get_toml_content(image_dir_win, cache_dir_win, resolution):
-    return f"""[general]
+def generate_toml(slug, img_dir_path, os_type, resolution):
+    if os_type == "win":
+        clean_path = img_dir_path.replace("\\", "\\\\")
+    else:
+        clean_path = img_dir_path
+    
+    res_str = f"[{resolution},{resolution}]"
+    
+    toml_content = f"""[general]
 caption_extension = ".txt"
 batch_size = 1
 enable_bucket = true
 bucket_no_upscale = false
 
 [[datasets]]
-image_directory = "{image_dir_win}"
-cache_directory = "{cache_dir_win}"
+image_directory = "{clean_path}"
+cache_directory = "{clean_path}_cache"
 num_repeats = 1
-resolution = [{resolution},{resolution}]
+resolution = {res_str}
 """
+    return toml_content
 
-def get_bat_content(slug, resolution, toml_filename):
-    win_cfg_path = f"C:\\AI\\apps\\musubi-tuner\\files\\tomls\\{toml_filename}"
-    
+def generate_bat(slug, toml_path_win_c, toml_path_win_unc):
+    # Uses MUSUBI_PATHS from utils
     return f"""@echo off
 SETLOCAL enabledelayedexpansion
 
 REM --- SET BASE PATHS ---
-set "WAN_ROOT=C:\\AI\\apps\\musubi-tuner"
-set "C_MODEL_BASE=\\\\wsl.localhost\\Ubuntu\\home\\seanf\\ai\\models"
+set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
+set "C_MODEL_BASE={utils.MUSUBI_PATHS['win_models']}"
 
 REM --- CONFIG AND OUTPUT PATHS ---
-set "CFG={win_cfg_path}"
+set "CFG={toml_path_win_c}"
 set "OUT=%WAN_ROOT%\\outputs\\{slug}"
 set "LOGDIR=%WAN_ROOT%\\logs"
-set "OUTNAME={slug}_{resolution}"
+set "OUTNAME={slug}"
 
 REM --- MODEL PATHS ---
 set "DIT_LOW=%C_MODEL_BASE%\\diffusion-models\\Wan\\Wan2.2\\14B\\Wan_2_2_I2V\\fp16\\wan2.2_t2v_low_noise_14B_fp16.safetensors"
@@ -59,7 +58,7 @@ if not exist "%OUT%" mkdir "%OUT%"
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
 REM 1. CACHE VAE LATENTS
-echo Starting VAE Latent Cache Generation for {resolution}px...
+echo Starting VAE Latent Cache Generation...
 python wan_cache_latents.py ^
   --dataset_config "%CFG%" ^
   --vae "%VAE%" ^
@@ -74,7 +73,7 @@ python wan_cache_text_encoder_outputs.py ^
   --fp8_t5
 
 REM 3. TRAIN
-echo Starting LoRA Training for {slug} @ {resolution}px...
+echo Starting LoRA Training...
 accelerate launch --num_processes 1 "wan_train_network.py" ^
   --dataset_config "%CFG%" ^
   --discrete_flow_shift 3 ^
@@ -119,63 +118,161 @@ pause
 ENDLOCAL
 """
 
-def convert_wsl_path_to_windows_network(linux_path):
-    abs_path = str(linux_path.resolve())
-    if not abs_path.startswith("/home"): return abs_path
-    win_style = abs_path.replace("/", "\\")
-    return f"\\\\\\\\wsl.localhost\\\\Ubuntu{win_style}"
+def generate_sh(slug, toml_path_wsl):
+    return f"""#!/bin/bash
+set -x
 
-def run(slug, trigger, model):
-    print(f"=== 06 PUBLISH: Generating Configs for {slug} ===")
+# --- PATHS ---
+MODELS_ROOT="{utils.MUSUBI_PATHS['wsl_models']}"
+WAN_DIR="{utils.MUSUBI_PATHS['wsl_app']}"
+CFG="{toml_path_wsl}"
+
+DIT_LOW="${{MODELS_ROOT}}/diffusion-models/Wan/Wan2.2/14B/Wan_2_2_T2V/fp16/wan2.2_t2v_low_noise_14B_fp16.safetensors"
+DIT_HIGH="${{MODELS_ROOT}}/diffusion-models/Wan/Wan2.2/14B/Wan_2_2_T2V/fp16/wan2.2_t2v_high_noise_14B_fp16.safetensors"
+VAE="${{MODELS_ROOT}}/vae/wan_2.1_vae.pth"
+T5="${{MODELS_ROOT}}/clip/models_t5_umt5-xxl-enc-bf16.pth"
+
+OUT="${{WAN_DIR}}/outputs/{slug}"
+OUTNAME="{slug}"
+LOGDIR="${{WAN_DIR}}/logs"
+
+# --- EXECUTION ---
+cd "${{WAN_DIR}}/"
+source venv/bin/activate
+
+echo "### Caching VAE latents... ###"
+python wan_cache_latents.py \\
+  --dataset_config "${{CFG}}" \\
+  --vae "${{VAE}}" \\
+  --vae_dtype float16 \\
+  --vae_cache_cpu
+
+echo "### Caching T5 text encoder outputs... ###"
+python wan_cache_text_encoder_outputs.py \\
+  --dataset_config "${{CFG}}" \\
+  --t5 "${{T5}}" \\
+  --batch_size 16 \\
+  --fp8_t5
+
+echo "### Starting training... ###"
+accelerate launch --num_processes 1 "wan_train_network.py" \\
+  --dataset_config "${{CFG}}" \\
+  --discrete_flow_shift 3 \\
+  --dit "${{DIT_LOW}}" \\
+  --dit_high_noise "${{DIT_HIGH}}" \\
+  --fp8_base \\
+  --fp8_scaled \\
+  --fp8_t5 \\
+  --gradient_accumulation_steps 1 \\
+  --gradient_checkpointing \\
+  --img_in_txt_in_offloading \\
+  --learning_rate 0.0001 \\
+  --log_with tensorboard \\
+  --logging_dir "${{LOGDIR}}" \\
+  --lr_scheduler cosine \\
+  --lr_warmup_steps 100 \\
+  --max_data_loader_n_workers 6 \\
+  --max_timestep 1000 \\
+  --max_train_epochs 35 \\
+  --min_timestep 0 \\
+  --mixed_precision fp16 \\
+  --network_alpha 8 \\
+  --network_args "verbose=True" "exclude_patterns=[]" \\
+  --network_dim 8 \\
+  --network_module networks.lora_wan \\
+  --offload_inactive_dit \\
+  --optimizer_type AdamW8bit \\
+  --output_dir "${{OUT}}" \\
+  --output_name "${{OUTNAME}}" \\
+  --persistent_data_loader_workers \\
+  --max_train_steps 1400 \\
+  --save_every_n_epochs 5 \\
+  --seed 42 \\
+  --t5 "${{T5}}" \\
+  --task t2v-A14B \\
+  --timestep_boundary 875 \\
+  --timestep_sampling logsnr \\
+  --vae "${{VAE}}" \\
+  --vae_cache_cpu \\
+  --vae_dtype float16 \\
+  --sdpa
+
+echo "Done."
+"""
+
+# --- MAIN EXECUTION ---
+def run(project_slug):
+    slug = project_slug
     
-    base_dir = Path.cwd()
-    # READS FROM: outputs/slug/05_downsample
-    downsample_base = base_dir / "outputs" / slug / "05_downsample"
+    # --- FIXED RESOLUTION ---
+    TARGET_RES = 256
+    res_str = str(TARGET_RES)
     
-    if not downsample_base.exists():
-        print(f"❌ Error: Downsample directory not found at {downsample_base}")
+    # --- FILE NAMES ---
+    toml_wsl_name = f"{slug}_{res_str}_wsl.toml"
+    sh_wsl_name = f"train_{slug}_{res_str}_wsl.sh"
+    toml_win_name = f"{slug}_{res_str}_win.toml"
+    bat_win_name = f"train_{slug}_{res_str}_win.bat"
+    
+    path = utils.get_project_path(slug)
+    
+    # Source Image Path (WSL)
+    wsl_img_path = path / utils.DIRS['downsample'] / res_str 
+    
+    if not wsl_img_path.exists():
+        print(f"❌ Downsample directory missing at {wsl_img_path}. Run Step 5 first.")
         return
 
-    # Ensure destination directories exist
-    DEST_TOML_DIR.mkdir(parents=True, exist_ok=True)
-    DEST_BAT_DIR.mkdir(parents=True, exist_ok=True)
+    # --- DESTINATIONS ---
+    # Windows Write Target (via /mnt/c)
+    # Mapping C:\AI\apps... to /mnt/c/AI/apps...
+    win_mount_root = Path("/mnt/c/AI/apps/musubi-tuner") 
     
-    for res in RESOLUTIONS:
-        src_img_dir = downsample_base / str(res)
-        src_cache_dir = downsample_base / f"{res}_cache" 
-        
-        if not src_img_dir.exists():
-            print(f"⚠️  Skipping {res}px: Directory not found.")
-            continue
-            
-        win_img_path = convert_wsl_path_to_windows_network(src_img_dir)
-        win_cache_path = convert_wsl_path_to_windows_network(src_cache_dir)
-        
-        # TOML
-        toml_filename = f"{slug}_{res}_win.toml"
-        toml_content = get_toml_content(win_img_path, win_cache_path, res)
-        dest_toml_path = DEST_TOML_DIR / toml_filename
-        
-        try:
-            with open(dest_toml_path, 'w', encoding='utf-8') as f:
-                f.write(toml_content)
-            print(f"✅ [{res}px] TOML saved: {dest_toml_path}")
-        except Exception as e:
-            print(f"❌ [{res}px] Failed to save TOML: {e}")
+    # Subdirs
+    win_toml_dir = win_mount_root / "files" / "tomls"
+    win_bat_dir = win_mount_root
+    
+    win_toml_dir.mkdir(parents=True, exist_ok=True)
+    
+    # --- UNC PATHS FOR CONFIG CONTENT ---
+    win_unc_img_path = utils.get_windows_unc_path(str(wsl_img_path))
+    
+    # --- GENERATE & WRITE ---
+    print(f"🚀 Deploying {TARGET_RES}x{TARGET_RES} configs for '{slug}'...")
 
-        # BAT
-        bat_filename = f"train_{slug}_{res}_win.bat"
-        bat_content = get_bat_content(slug, res, toml_filename)
-        dest_bat_path = DEST_BAT_DIR / bat_filename
-        
-        try:
-            with open(dest_bat_path, 'w', encoding='utf-8') as f:
-                f.write(bat_content)
-            print(f"✅ [{res}px] BAT saved:  {dest_bat_path}")
-        except Exception as e:
-            print(f"❌ [{res}px] Failed to save BAT: {e}")
+    # 1. WSL Files (Written to local app folder or /mnt/c if user prefers? 
+    # Original pasted code wrote WSL files to local `wsl_musubi_root`. 
+    # I will write them to the Project Output folder for safekeeping/execution)
+    
+    local_output_dir = path / "06_publish"
+    local_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    toml_wsl_content = generate_toml(slug, str(wsl_img_path), "wsl", TARGET_RES)
+    sh_wsl_content = generate_sh(slug, str(local_output_dir / toml_wsl_name))
+    
+    with open(local_output_dir / toml_wsl_name, "w") as f: f.write(toml_wsl_content)
+    with open(local_output_dir / sh_wsl_name, "w") as f: f.write(sh_wsl_content)
+    os.chmod(local_output_dir / sh_wsl_name, 0o755)
 
-    print(f"\n🎉 Publish Complete.")
+    # 2. WINDOWS Files (Written to /mnt/c/AI/apps/musubi-tuner)
+    
+    # Path inside the BAT file needs to point to C:\...
+    win_toml_c_path = f"{utils.MUSUBI_PATHS['win_app']}\\files\\tomls\\{toml_win_name}"
+    
+    toml_win_content = generate_toml(slug, win_unc_img_path, "win", TARGET_RES)
+    bat_win_content = generate_bat(slug, win_toml_c_path, win_toml_c_path)
+    
+    # Write TOML to /mnt/c/.../files/tomls/
+    with open(win_toml_dir / toml_win_name, "w") as f: f.write(toml_win_content)
+    
+    # Write BAT to /mnt/c/.../
+    with open(win_bat_dir / bat_win_name, "w") as f: f.write(bat_win_content)
+
+    print("\n✅ Deployment Complete:")
+    print(f"   📂 WSL Files (Local): {local_output_dir}")
+    print(f"   🪟 Windows TOML: {win_toml_dir / toml_win_name}")
+    print(f"   🪟 Windows BAT:  {win_bat_dir / bat_win_name}")
 
 if __name__ == "__main__":
-    run("ed_milliband", "ohwx", "wan2.1")
+    if len(sys.argv) > 1:
+        run(sys.argv[1])

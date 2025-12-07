@@ -1,127 +1,113 @@
-# Script Name: core/utils.py
-# Authors: DeadlyGraphics, Gemini
-# Description: Shared utilities, paths, database logging, and dependency management.
-
-import sys
 import os
-import subprocess
-import re
 import json
-import random
-import csv
+import sys
+import subprocess
+import shutil
 from pathlib import Path
 
-# --- PATH CONFIGURATION ---
-# We assume we are running inside 'ai/apps/DG_collect_dataset'
-ROOT_DIR = Path(__file__).parent.parent 
-VENV_PATH = ROOT_DIR / "venv"
-REQUIREMENTS_PATH = ROOT_DIR / "core" / "requirements.txt"
+# --- CONFIGURATION ---
+BASE_PATH = Path(os.getcwd())
+VENV_PATH = BASE_PATH / ".venv"
 
-# Output Directories
-# Adjust these relative to your workspace root if needed
-LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs" 
-LINUX_DATASETS_ROOT = ROOT_DIR / "datasets" 
-DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
-
+# Directory Structure Map
 DIRS = {
-    "scrape": "00_scraped",
-    "crop": "01_cropped",
-    "caption": "02_captions",
-    "master": "03_master_1024",
-    "downsample": "04_downsampled",
-    "publish": "05_publish"
+    'scraped': '00_scraped',
+    'crop': '01_cropped',
+    'caption': '02_captions',
+    'master': '03_master_1024',
+    'resize': '04_resize',
+    'downsample': '05_downsample',
+    'publish': '06_publish'
 }
 
-# --- MUSUBI CONFIG (Restored from your upload) ---
+# Musubi Tuner Paths (Dual OS Support)
 MUSUBI_PATHS = {
-    "win_models": r"C:\AI\models",
-    "wsl_models": "/home/seanf/ai/models",
-    "win_app": r"C:\AI\apps\musubi-tuner",
-    "wsl_app": "/home/seanf/ai/apps/musubi-tuner"
+    'wsl_app': "/home/seanf/ai/apps/musubi-tuner",
+    'wsl_models': "/home/seanf/ai/models",
+    'win_app': r"C:\AI\apps\musubi-tuner",
+    'win_models': r"\\wsl.localhost\Ubuntu\home\seanf\ai\models"
 }
 
-# --- PATH HELPERS ---
-def get_windows_unc_path(linux_path):
-    r"""
-    Converts /home/seanf/ai/... -> \\wsl.localhost\Ubuntu\home\seanf\ai\...
-    """
-    p = str(linux_path).replace("/mnt/c/", "C:/")
-    if p.startswith("/home"):
-        # Assuming standard WSL Ubuntu distro name. Adjust if using Debian/etc.
-        win_style = p.replace("/", "\\")
-        return f"\\\\wsl.localhost\\Ubuntu{win_style}"
-    return p
+# --- MODEL PATH CONFIGURATION ---
+# Map C:\AI\models\LLM to WSL path
+OLLAMA_MODELS_WIN = r"C:\AI\models\LLM"
+OLLAMA_MODELS_WSL = "/mnt/c/AI/models/LLM"
 
-# --- DATABASE HELPERS ---
-def update_trigger_db(name, trigger, gender):
-    """Updates the CSV database with the new character."""
-    if not DB_PATH.parent.exists():
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    
-    file_exists = DB_PATH.exists()
-    rows = []
-    
-    if file_exists:
-        with open(DB_PATH, 'r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-    
-    # Check for duplicate
-    for row in rows:
-        if row.get('TriggerWord') == trigger:
-            print(f"   [DB] Trigger '{trigger}' already exists.")
-            return
-            
-    # Append
-    with open(DB_PATH, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=["Name", "TriggerWord", "Gender"])
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow({"Name": name, "TriggerWord": trigger, "Gender": gender})
-    
-    print(f"📚 Database updated: {name} -> {trigger}")
+def install_package(package_name):
+    """Installs a package via pip."""
+    print(f"📦 Installing missing dependency: {package_name}...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+        print(f"✅ Installed {package_name}")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to install {package_name}. Error: {e}")
+        sys.exit(1)
 
-# --- DEPENDENCY BOOTSTRAP ---
 def bootstrap(install_reqs=True):
-    """Ensures we are running in the correct VENV."""
-    # Check if running in VENV
-    is_venv = (sys.prefix != sys.base_prefix)
+    """Ensures environment variables and dependencies are set up."""
     
-    if is_venv:
-        # We are inside. Just ensure deps are there if requested.
+    # 1. Set Ollama Model Path
+    os.environ['OLLAMA_MODELS'] = OLLAMA_MODELS_WSL
+    
+    if not install_reqs:
         return
 
-    # If not in VENV, try to find it and relaunch
-    if sys.platform == "win32":
-        venv_python = VENV_PATH / "Scripts" / "python.exe"
-    else:
-        venv_python = VENV_PATH / "bin" / "python3"
+    # 2. Check and Install Critical Libraries
+    # Ollama
+    try:
+        import ollama
+    except ImportError:
+        install_package("ollama")
 
-    if not venv_python.exists():
-        print(f"❌ VENV missing at {VENV_PATH}")
-        print("   Creating VENV...")
-        subprocess.check_call([sys.executable, "-m", "venv", str(VENV_PATH)])
-        # Re-verify
-        if not venv_python.exists():
-            print("❌ VENV creation failed. Please install python3-venv.")
-            sys.exit(1)
+    # Slugify
+    try:
+        from slugify import slugify
+    except ImportError:
+        install_package("python-slugify")
+        
+    # Pillow (Required for core modules)
+    try:
+        from PIL import Image
+    except ImportError:
+        install_package("Pillow")
 
-    # Relaunch script with the venv python
-    print(f"--> Relaunching inside VENV: {venv_python}")
-    os.execv(str(venv_python), [str(venv_python)] + sys.argv)
-
-def get_project_path(project_slug):
-    return LINUX_PROJECTS_ROOT / project_slug
-
-def save_config(project_slug, data):
-    path = get_project_path(project_slug) / "project_config.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'w') as f: json.dump(data, f, indent=4)
-
-def load_config(project_slug):
-    path = get_project_path(project_slug) / "project_config.json"
-    if not path.exists(): return None
-    with open(path, 'r') as f: return json.load(f)
+    # Requests (Used by scrape)
+    try:
+        import requests
+    except ImportError:
+        install_package("requests")
 
 def slugify(text):
-    return re.sub(r'[\W_]+', '_', text.lower()).strip('_')
+    """Wraps python-slugify. Ensures it's imported after bootstrap."""
+    try:
+        from slugify import slugify as _slugify
+        return _slugify(text)
+    except ImportError:
+        print("❌ Error: python-slugify not installed. Bootstrap failed.")
+        sys.exit(1)
+
+def get_project_path(slug):
+    return BASE_PATH / "outputs" / slug
+
+def load_config(slug):
+    path = get_project_path(slug) / "project_config.json"
+    if not path.exists():
+        return None
+    with open(path, 'r') as f:
+        return json.load(f)
+
+def save_config(slug, data):
+    path = get_project_path(slug) / "project_config.json"
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=4)
+
+def get_windows_unc_path(wsl_path):
+    """Converts a WSL path (/home/seanf/...) to Windows UNC"""
+    if not wsl_path.startswith("/home"):
+        return wsl_path 
+    
+    clean_path = str(wsl_path).replace("/", "\\")
+    if clean_path.startswith("\\"):
+        clean_path = clean_path[1:]
+        
+    return f"\\\\wsl.localhost\\Ubuntu\\{clean_path}"
