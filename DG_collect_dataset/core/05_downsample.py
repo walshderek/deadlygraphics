@@ -1,52 +1,80 @@
-# Script Name: core/04_resize.py
-# Authors: DeadlyGraphics, Gemini, ChatGPT
-# Description: Resizes cropped images to a master resolution (1024x1024) with padding if needed.
+"""
+Script Name: 05_downsample.py
+Author: DeadlyGraphics
+Date: 2025-12-06
+"""
 
-import sys
 import os
-import utils
-from PIL import Image
+from pathlib import Path
+from PIL import Image, ImageOps
 
-TARGET_SIZE = 1024
-
-def resize_pad_to_square(img_path, save_path, target_size=1024):
-    try:
-        img = Image.open(img_path).convert("RGB")
-        img.thumbnail((target_size, target_size), Image.Resampling.LANCZOS)
-        
-        new_img = Image.new("RGB", (target_size, target_size), (0, 0, 0))
-        paste_x = (target_size - img.width) // 2
-        paste_y = (target_size - img.height) // 2
-        new_img.paste(img, (paste_x, paste_y))
-        
-        new_img.save(save_path, quality=95)
-        return True
-    except Exception as e:
-        print(f"⚠️ Error resizing {os.path.basename(img_path)}: {e}")
-        return False
-
-def run(project_slug):
-    path = utils.get_project_path(project_slug)
-    in_dir = path / utils.DIRS['crop']
-    out_dir = path / utils.DIRS['master']
+def run(slug, trigger_word):
+    print(f"=== 05 DOWNSAMPLE: Processing for {slug} ===")
     
-    if not in_dir.exists():
-        print("❌ Run Step 2 (Crop) first.")
+    base_dir = Path.cwd()
+    
+    # CORRECT INPUT: outputs/slug/03_master_1024
+    master_dir = base_dir / "outputs" / slug / "03_master_1024"
+    
+    # CORRECT OUTPUT: outputs/slug/05_downsample
+    downsample_base = base_dir / "outputs" / slug / "05_downsample"
+    
+    sizes = [1024, 512, 256]
+
+    if not master_dir.exists():
+        print(f"❌ Error: Master directory not found at {master_dir}")
         return
 
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # Create 256, 512, 1024 folders and cache folders
+    for size in sizes:
+        (downsample_base / str(size)).mkdir(parents=True, exist_ok=True)
+        (downsample_base / f"{size}_cache").mkdir(parents=True, exist_ok=True)
+
+    images = [f for f in os.listdir(master_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
     
-    print(f"🖼️ Resizing to Master {TARGET_SIZE}x{TARGET_SIZE}...")
-    
-    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
-    count = 0
-    
-    for f in files:
-        if resize_pad_to_square(in_dir / f, out_dir / f, TARGET_SIZE):
-            count += 1
-            
-    print(f"✅ Master set created: {count} images.")
+    if not images:
+        print("❌ Error: No images found in master directory.")
+        return
+
+    for img_name in images:
+        img_path = master_dir / img_name
+        txt_name = img_path.stem + ".txt"
+        txt_path = master_dir / txt_name
+
+        try:
+            with Image.open(img_path) as img:
+                img = img.convert("RGB")
+
+                # --- TRIGGER WORD INJECTION ---
+                final_caption = ""
+                if txt_path.exists():
+                    with open(txt_path, 'r', encoding='utf-8') as f:
+                        existing_caption = f.read().strip()
+                    
+                    if trigger_word and trigger_word.lower() not in existing_caption.lower():
+                        final_caption = f"{trigger_word}, {existing_caption}"
+                    else:
+                        final_caption = existing_caption
+                else:
+                    final_caption = trigger_word
+
+                # Save to 256, 512, 1024 folders
+                for size in sizes:
+                    # Resize
+                    processed_img = ImageOps.fit(img, (size, size), method=Image.Resampling.LANCZOS)
+                    
+                    # Save Image
+                    save_dir = downsample_base / str(size)
+                    processed_img.save(save_dir / img_name, quality=95)
+                    
+                    # Save Text with Trigger Word
+                    with open(save_dir / txt_name, 'w', encoding='utf-8') as f:
+                        f.write(final_caption)
+
+        except Exception as e:
+            print(f"⚠️ Error processing {img_name}: {e}")
+
+    print(f"✅ Downsampling Complete. Folders created at: {downsample_base}")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        run(sys.argv[1])
+    run("ed_milliband", "ohwx")
