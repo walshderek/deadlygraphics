@@ -2,7 +2,8 @@ import os
 import json
 import sys
 import subprocess
-import shutil
+import random
+import re
 from pathlib import Path
 
 # --- CONFIGURATION ---
@@ -10,14 +11,12 @@ BASE_PATH = Path(os.getcwd())
 VENV_PATH = BASE_PATH / ".venv"
 
 # Directory Structure Map
+# Merged resize/downsample/publish into '03_publish'
 DIRS = {
     'scraped': '00_scraped',
     'crop': '01_cropped',
     'caption': '02_captions',
-    'master': '03_master_1024',
-    'resize': '04_resize',
-    'downsample': '05_downsample',
-    'publish': '06_publish'
+    'publish': '03_publish' 
 }
 
 # Musubi Tuner Paths (Dual OS Support)
@@ -29,8 +28,6 @@ MUSUBI_PATHS = {
 }
 
 # --- MODEL PATH CONFIGURATION ---
-# Map C:\AI\models\LLM to WSL path
-OLLAMA_MODELS_WIN = r"C:\AI\models\LLM"
 OLLAMA_MODELS_WSL = "/mnt/c/AI/models/LLM"
 
 def install_package(package_name):
@@ -45,69 +42,72 @@ def install_package(package_name):
 
 def bootstrap(install_reqs=True):
     """Ensures environment variables and dependencies are set up."""
-    
-    # 1. Set Ollama Model Path
     os.environ['OLLAMA_MODELS'] = OLLAMA_MODELS_WSL
     
-    if not install_reqs:
-        return
+    if not install_reqs: return
 
-    # 2. Check and Install Critical Libraries
-    # Ollama
-    try:
-        import ollama
-    except ImportError:
-        install_package("ollama")
+    # Core deps
+    try: import ollama
+    except ImportError: install_package("ollama")
 
-    # Slugify
-    try:
-        from slugify import slugify
-    except ImportError:
-        install_package("python-slugify")
-        
-    # Pillow (Required for core modules)
-    try:
-        from PIL import Image
-    except ImportError:
-        install_package("Pillow")
+    try: from PIL import Image
+    except ImportError: install_package("Pillow")
 
-    # Requests (Used by scrape)
-    try:
-        import requests
-    except ImportError:
-        install_package("requests")
+    try: import requests
+    except ImportError: install_package("requests")
+    
+    # Qwen-VL Deps (Always download/check, even if not used by default)
+    try: import torch
+    except ImportError: install_package("torch torchvision torchaudio")
+    
+    try: import transformers
+    except ImportError: install_package("transformers")
+    
+    try: import huggingface_hub
+    except ImportError: install_package("huggingface_hub")
+
+    # Download Qwen-VL Model
+    from huggingface_hub import snapshot_download
+    models_dir = BASE_PATH / "models"
+    models_dir.mkdir(exist_ok=True)
+    qwen_path = models_dir / "qwen-vl"
+    
+    if not qwen_path.exists():
+        print("⬇️  Downloading qwen-vl model (This runs once)...")
+        try:
+            snapshot_download(repo_id="Salesforce/Qwen-VL-Chat", local_dir=qwen_path)
+            print("✅ Qwen-VL downloaded.")
+        except Exception as e:
+            print(f"⚠️ Failed to download Qwen-VL: {e}")
 
 def slugify(text):
-    """Wraps python-slugify. Ensures it's imported after bootstrap."""
-    try:
-        from slugify import slugify as _slugify
-        return _slugify(text)
-    except ImportError:
-        print("❌ Error: python-slugify not installed. Bootstrap failed.")
-        sys.exit(1)
+    """Standard slugify: 'Ed Milliband' -> 'ed_milliband'"""
+    # Remove non-word chars (allow spaces/hyphens first)
+    text = re.sub(r'[^\w\s-]', '', text).lower()
+    # Replace spaces/hyphens with underscore
+    return re.sub(r'[-\s]+', '_', text).strip('-_')
+
+def gen_trigger(name):
+    """Generates trigger: First 2 letters (Upper) + Random 100-999 + Last Initial"""
+    parts = name.split()
+    first = parts[0].upper()[:2]
+    last = parts[-1].upper()[0] if len(parts) > 1 else "X"
+    return f"{first}{random.randint(100,999)}{last}"
 
 def get_project_path(slug):
     return BASE_PATH / "outputs" / slug
 
 def load_config(slug):
     path = get_project_path(slug) / "project_config.json"
-    if not path.exists():
-        return None
-    with open(path, 'r') as f:
-        return json.load(f)
+    if not path.exists(): return None
+    with open(path, 'r') as f: return json.load(f)
 
 def save_config(slug, data):
     path = get_project_path(slug) / "project_config.json"
-    with open(path, 'w') as f:
-        json.dump(data, f, indent=4)
+    with open(path, 'w') as f: json.dump(data, f, indent=4)
 
 def get_windows_unc_path(wsl_path):
-    """Converts a WSL path (/home/seanf/...) to Windows UNC"""
-    if not wsl_path.startswith("/home"):
-        return wsl_path 
-    
+    if not wsl_path.startswith("/home"): return wsl_path 
     clean_path = str(wsl_path).replace("/", "\\")
-    if clean_path.startswith("\\"):
-        clean_path = clean_path[1:]
-        
+    if clean_path.startswith("\\"): clean_path = clean_path[1:]
     return f"\\\\wsl.localhost\\Ubuntu\\{clean_path}"
