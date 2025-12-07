@@ -55,7 +55,7 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=100, help="Max images to download")
     parser.add_argument("--count", type=int, help="Alias for --limit") 
     
-    parser.add_argument("--gender", choices=["m", "f"])
+    parser.add_argument("--gender", choices=["m", "f"], help="Gender for scraping context")
     parser.add_argument("--trigger", type=str, help="Manual trigger word")
     parser.add_argument("--only-step", type=int, help="Run specific step (1-4)")
     parser.add_argument("--model", default="moondream", choices=["moondream", "qwen-vl"], help="Caption model")

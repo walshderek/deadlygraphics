@@ -37,25 +37,35 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
             time.sleep(1.5)
             
             thumbnails = page.query_selector_all("a.iusc")
+            prev_count = len(urls)
             
-            # Click "See more" if valid
-            if not thumbnails or len(thumbnails) == len(urls):
-                 try:
-                    if page.is_visible('input[value="See more images"]'):
-                        page.click('input[value="See more images"]', timeout=1000)
-                        time.sleep(1)
-                 except: pass
-
+            # Extract URLs
             for thumb in thumbnails:
                 if len(urls) >= limit: break
-                try:
-                    m = json.loads(thumb.get_attribute("m"))
-                    murl = m.get("murl")
-                    if murl: urls.add(murl)
-                except: pass
+                m = thumb.get_attribute("m")
+                if m:
+                    try:
+                        data = json.loads(m)
+                        img_url = data.get("murl")
+                        if img_url and img_url.startswith("http"): 
+                            urls.add(img_url)
+                    except: pass
             
-            print(f"    Found {len(urls)} images...")
-            if len(thumbnails) == 0: break
+            print(f"    Found {len(urls)} unique URLs...")
+            
+            # Break condition: No new URLs found in this pass
+            if len(urls) == prev_count:
+                # Try clicking "See more images"
+                try:
+                    if page.is_visible('input[value="See more images"]'):
+                        print("    Clicking 'See more images'...")
+                        page.click('input[value="See more images"]', timeout=1000)
+                        time.sleep(2)
+                    else:
+                        # No button and no new images -> End of results
+                        break
+                except:
+                    break
 
         browser.close()
         

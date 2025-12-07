@@ -44,6 +44,7 @@ def bootstrap(install_reqs=True):
     
     os.environ['OLLAMA_MODELS'] = "/mnt/c/AI/models/LLM"
 
+    # Core Dependencies (Point 2)
     try: import deepface
     except ImportError: install_package("deepface tf-keras opencv-python")
     
@@ -55,8 +56,14 @@ def bootstrap(install_reqs=True):
 
     try: import huggingface_hub
     except ImportError: install_package("huggingface_hub")
+    
+    try: from PIL import Image
+    except ImportError: install_package("Pillow")
+    
+    try: import requests
+    except ImportError: install_package("requests")
 
-    # Qwen-VL Download
+    # Qwen-VL Download (Point 1)
     from huggingface_hub import snapshot_download
     models_dir = ROOT_DIR / "models"
     models_dir.mkdir(exist_ok=True)

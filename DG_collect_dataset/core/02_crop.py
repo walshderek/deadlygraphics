@@ -16,7 +16,7 @@ def run(slug):
         return
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg', '.webp'))]
     print(f"--> [02_crop] Processing {len(files)} images...")
     
     count = 0
@@ -27,7 +27,6 @@ def run(slug):
             img_pil = ImageOps.exif_transpose(img_pil).convert("RGB")
             cv2_img = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
             
-            # DeepFace Extraction
             faces = DeepFace.extract_faces(
                 img_path=cv2_img, 
                 detector_backend='opencv', 
@@ -37,10 +36,10 @@ def run(slug):
             
             if not faces: continue
             
-            # Max face by area
             face = max(faces, key=lambda x: x['facial_area']['w'] * x['facial_area']['h'])
             
-            if face['confidence'] > 0 and face['confidence'] < 0.5:
+            # Confidence Check Fix
+            if face['confidence'] < 0.5:
                 continue
                 
             fa = face["facial_area"]

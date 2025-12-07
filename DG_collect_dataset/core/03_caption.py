@@ -42,11 +42,14 @@ def run(slug, model="moondream"):
             trust_remote_code=True
         ).eval()
     else:
+        # Ping Check Fix
         try:
             ollama_client = ollama.Client(host=OLLAMA_HOST)
             ollama_client.ps()
-        except:
-            print("❌ Ollama connection failed."); return
+            print(f"✅ Connected to Ollama at {OLLAMA_HOST}")
+        except Exception as e:
+            print(f"❌ Could not connect to Ollama: {e}")
+            return
 
     files = [f for f in os.listdir(in_dir) if f.lower().endswith('.jpg')]
     print(f"📝 Captioning {len(files)} images with {model}...")
@@ -72,12 +75,17 @@ def run(slug, model="moondream"):
         else:
             with open(img_path, "rb") as ifile:
                 b64 = base64.b64encode(ifile.read()).decode('utf-8')
-            res = ollama_client.chat(
-                model='moondream', 
-                messages=[{'role': 'user', 'content': final_prompt, 'images': [b64]}],
-                options={'timeout': 60}
-            )
-            caption = res['message']['content'].replace('\n', ' ').strip()
+            # Timeout Fix
+            try:
+                res = ollama_client.chat(
+                    model='moondream', 
+                    messages=[{'role': 'user', 'content': final_prompt, 'images': [b64]}],
+                    options={'timeout': 60}
+                )
+                caption = res['message']['content'].replace('\n', ' ').strip()
+            except Exception as e:
+                print(f"    ⚠️ Caption error: {e}")
+                continue
 
         if not caption.startswith(trigger):
             caption = f"{trigger}, {caption}"
@@ -85,3 +93,5 @@ def run(slug, model="moondream"):
         with open(txt_path, "w", encoding="utf-8") as tf:
             tf.write(caption)
         print(f"   [{i}/{len(files)}] Done.")
+    
+    print(f"✅ Captions complete.")
