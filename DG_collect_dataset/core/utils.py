@@ -1,22 +1,26 @@
-import os
-import json
 import sys
+import os
 import subprocess
-import random
 import re
+import json
+import random
+import csv
 from pathlib import Path
 
 # --- CONFIGURATION ---
-BASE_PATH = Path(os.getcwd())
-VENV_PATH = BASE_PATH / ".venv"
+ROOT_DIR = Path(__file__).parent.parent
+VENV_PATH = ROOT_DIR / ".venv"
+REQUIREMENTS_PATH = ROOT_DIR / "core" / "requirements.txt"
+LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs"
+LINUX_DATASETS_ROOT = ROOT_DIR / "datasets"
+DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
 
 # Directory Structure Map
-# Merged resize/downsample/publish into '03_publish'
 DIRS = {
-    'scraped': '00_scraped',
-    'crop': '01_cropped',
-    'caption': '02_captions',
-    'publish': '03_publish' 
+    "scrape": "00_scraped",
+    "crop": "01_cropped",
+    "caption": "02_captions",
+    "publish": "03_publish"
 }
 
 # Musubi Tuner Paths (Dual OS Support)
@@ -27,9 +31,6 @@ MUSUBI_PATHS = {
     'win_models': r"\\wsl.localhost\Ubuntu\home\seanf\ai\models"
 }
 
-# --- MODEL PATH CONFIGURATION ---
-OLLAMA_MODELS_WSL = "/mnt/c/AI/models/LLM"
-
 def install_package(package_name):
     """Installs a package via pip."""
     print(f"📦 Installing missing dependency: {package_name}...")
@@ -38,54 +39,41 @@ def install_package(package_name):
         print(f"✅ Installed {package_name}")
     except subprocess.CalledProcessError as e:
         print(f"❌ Failed to install {package_name}. Error: {e}")
-        sys.exit(1)
 
 def bootstrap(install_reqs=True):
     """Ensures environment variables and dependencies are set up."""
-    os.environ['OLLAMA_MODELS'] = OLLAMA_MODELS_WSL
-    
     if not install_reqs: return
 
-    # Core deps
-    try: import ollama
-    except ImportError: install_package("ollama")
+    # Install Core Deps
+    try: import deepface
+    except ImportError: install_package("deepface tf-keras opencv-python")
+    
+    try: import playwright
+    except ImportError: 
+        install_package("playwright")
+        print("📦 Installing Playwright browsers...")
+        subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
 
-    try: from PIL import Image
-    except ImportError: install_package("Pillow")
-
-    try: import requests
-    except ImportError: install_package("requests")
-    
-    # Qwen-VL Deps (Always download/check, even if not used by default)
-    try: import torch
-    except ImportError: install_package("torch torchvision torchaudio")
-    
-    try: import transformers
-    except ImportError: install_package("transformers")
-    
     try: import huggingface_hub
     except ImportError: install_package("huggingface_hub")
 
-    # Download Qwen-VL Model
+    # Qwen-VL Download Logic
     from huggingface_hub import snapshot_download
-    models_dir = BASE_PATH / "models"
+    models_dir = ROOT_DIR / "models"
     models_dir.mkdir(exist_ok=True)
     qwen_path = models_dir / "qwen-vl"
     
     if not qwen_path.exists():
-        print("⬇️  Downloading qwen-vl model (This runs once)...")
+        print("⬇️  Downloading Qwen-VL model (Qwen/Qwen3-VL-4B-Instruct)...")
         try:
-            snapshot_download(repo_id="Salesforce/Qwen-VL-Chat", local_dir=qwen_path)
+            snapshot_download(repo_id="Qwen/Qwen3-VL-4B-Instruct", local_dir=qwen_path)
             print("✅ Qwen-VL downloaded.")
         except Exception as e:
             print(f"⚠️ Failed to download Qwen-VL: {e}")
 
 def slugify(text):
-    """Standard slugify: 'Ed Milliband' -> 'ed_milliband'"""
-    # Remove non-word chars (allow spaces/hyphens first)
-    text = re.sub(r'[^\w\s-]', '', text).lower()
-    # Replace spaces/hyphens with underscore
-    return re.sub(r'[-\s]+', '_', text).strip('-_')
+    """Simple slugify: 'Ed Milliband' -> 'edmilliband'"""
+    return re.sub(r'[\W_]+', '', text.lower()).strip('')
 
 def gen_trigger(name):
     """Generates trigger: First 2 letters (Upper) + Random 100-999 + Last Initial"""
@@ -95,7 +83,7 @@ def gen_trigger(name):
     return f"{first}{random.randint(100,999)}{last}"
 
 def get_project_path(slug):
-    return BASE_PATH / "outputs" / slug
+    return LINUX_PROJECTS_ROOT / slug
 
 def load_config(slug):
     path = get_project_path(slug) / "project_config.json"
@@ -111,3 +99,7 @@ def get_windows_unc_path(wsl_path):
     clean_path = str(wsl_path).replace("/", "\\")
     if clean_path.startswith("\\"): clean_path = clean_path[1:]
     return f"\\\\wsl.localhost\\Ubuntu\\{clean_path}"
+
+def update_trigger_db(slug, trigger, full_name):
+    # Placeholder for database update logic
+    pass

@@ -1,28 +1,24 @@
 import sys
 import os
 import base64
+import ollama
 import utils
-import re
-from pathlib import Path
 
-# --- CONFIGURATION ---
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://127.0.0.1:11434')
-CAPTION_MODE = "fixed" # Default
-FORBIDDEN_WORDS = ["hair", "eyes", "nose", "mouth", "skin", "makeup", "face"]
+CAPTION_MODE = "fixed"
 
-# Qwen Paths
-QWEN_PATH = utils.BASE_PATH / "models" / "qwen-vl"
+def generate_prompt(trigger, mode):
+    base = f"The person in this image is named {trigger}. "
+    if mode == "fixed":
+        return (f"{base}\nDescribe the image for an AI training dataset.\n"
+                f"RULES:\n1. Start the sentence exactly with '{trigger}, '.\n"
+                f"2. Describe CLOTHING, BACKGROUND, POSE, LIGHTING.\n"
+                f"3. Do NOT describe facial features, makeup, or hairstyle.\n"
+                f"4. Keep it to one concise paragraph.")
+    else:
+        return base + " Describe everything."
 
-def strip_forbidden(text):
-    """Post-process to remove sentences describing forbidden facial features."""
-    sentences = text.split('.')
-    clean = []
-    for s in sentences:
-        if not any(bad in s.lower() for bad in FORBIDDEN_WORDS):
-            clean.append(s)
-    return '.'.join(clean).strip()
-
-def run(slug, model_type="moondream"):
+def run(slug, model="moondream"):
     config = utils.load_config(slug)
     if not config: return
     trigger = config['trigger']
@@ -30,87 +26,77 @@ def run(slug, model_type="moondream"):
     in_dir = path / utils.DIRS['crop']
     out_dir = path / utils.DIRS['caption']
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
-    if not files: return
     
-    print(f"📝 Captioning {len(files)} images using {model_type}...")
-
-    # --- MODEL SETUP ---
+    # Initialize Clients
+    ollama_client = None
     qwen_processor = None
     qwen_model = None
-    ollama_client = None
-
-    if model_type == "qwen-vl":
-        from transformers import QwenVLProcessor, QwenVLChatModel
+    
+    if model == "qwen-vl":
+        print("⏳ Loading Qwen-VL Model (this may take time)...")
+        from transformers import QwenVLProcessor, QwenVLForConditionalGeneration
         import torch
-        print("   Loading Qwen-VL (this takes memory)...")
-        try:
-            qwen_processor = QwenVLProcessor.from_pretrained(str(QWEN_PATH), trust_remote_code=True)
-            qwen_model = QwenVLChatModel.from_pretrained(str(QWEN_PATH), device_map="cuda", trust_remote_code=True).eval()
-        except Exception as e:
-            print(f"❌ Failed to load Qwen-VL: {e}")
-            return
+        qwen_path = utils.ROOT_DIR / "models" / "qwen-vl"
+        qwen_processor = QwenVLProcessor.from_pretrained(str(qwen_path), trust_remote_code=True)
+        qwen_model = QwenVLForConditionalGeneration.from_pretrained(
+            str(qwen_path), 
+            device_map="auto" if torch.cuda.is_available() else "cpu", 
+            trust_remote_code=True
+        ).eval()
     else:
-        # Default Ollama
-        import ollama
-        ollama_client = ollama.Client(host=OLLAMA_HOST)
+        try:
+            ollama_client = ollama.Client(host=OLLAMA_HOST)
+            ollama_client.ps()
+            print("✅ Connected to Ollama.")
+        except Exception as e:
+            print(f"❌ Ollama connection failed: {e}")
+            return
+
+    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png'))]
+    print(f"📝 Captioning {len(files)} images with {model}...")
 
     count = 0
-    for i, f in enumerate(files, 1):
-        img_path = in_dir / f
+    for f in files:
         txt_path = out_dir / (os.path.splitext(f)[0] + ".txt")
-        if txt_path.exists(): 
+        if txt_path.exists():
             count += 1
             continue
-
-        print(f"   [{i}/{len(files)}] Processing {f}...", end="", flush=True)
+            
+        img_path = in_dir / f
         caption = ""
+        final_prompt = generate_prompt(trigger, CAPTION_MODE)
+        
+        if model == "qwen-vl":
+            inputs = qwen_processor.apply_chat_template(
+                [{"role": "user", "content": final_prompt, "image": str(img_path)}],
+                return_tensors="pt"
+            )
+            inputs = inputs.to(qwen_model.device)
+            outputs = qwen_model.generate(**inputs, max_new_tokens=256)
+            caption = qwen_processor.decode(outputs[0], skip_special_tokens=True)
+            # Cleanup Qwen output
+            if "Describe the image" in caption: 
+                caption = caption.split("concise paragraph.")[-1].strip()
 
-        # --- QWEN-VL LOGIC ---
-        if model_type == "qwen-vl":
-            query = qwen_processor.from_list_format([
-                {'image': str(img_path)},
-                {'text': f"Describe this image. Start with '{trigger}, '. Do not describe facial features."}
-            ])
-            inputs = qwen_processor(query, return_tensors='pt').to(qwen_model.device)
-            gen_kwargs = {"max_new_tokens": 512, "do_sample": False}
-            pred = qwen_model.generate(**inputs, **gen_kwargs)
-            caption = qwen_processor.decode(pred[0], skip_special_tokens=False)
-            # Cleanup Qwen output formatting
-            caption = caption.split("Describe this image.")[-1].strip()
+        else: # Moondream via Ollama
+            with open(img_path, "rb") as ifile:
+                b64 = base64.b64encode(ifile.read()).decode('utf-8')
+            res = ollama_client.chat(
+                model='moondream', 
+                messages=[{'role': 'user', 'content': final_prompt, 'images': [b64]}],
+                options={'timeout': 60}
+            )
+            caption = res['message']['content'].replace('\n', ' ').strip()
 
-        # --- MOONDREAM LOGIC ---
-        else:
-            try:
-                with open(img_path, "rb") as img_file:
-                    b64 = base64.b64encode(img_file.read()).decode('utf-8')
-                res = ollama_client.chat(model='moondream', messages=[{
-                    'role': 'user', 
-                    'content': f"Describe this image. Start with '{trigger}, '. RULES: Do NOT describe eyes/hair/face.", 
-                    'images': [b64]
-                }])
-                caption = res['message']['content'].replace('\n', ' ').strip()
-            except Exception as e:
-                print(f" Err: {e}")
-
-        # --- ENFORCEMENT ---
-        # 1. Trigger
+        # Enforcement
         if not caption.startswith(trigger):
             caption = f"{trigger}, {caption}"
-        
-        # 2. Forbidden Words (Fixed Mode)
-        if CAPTION_MODE == "fixed":
-            caption = strip_forbidden(caption)
-
         if not caption or len(caption) < 10:
             caption = f"{trigger}, a person."
-
-        with open(txt_path, "w", encoding="utf-8") as tf: tf.write(caption)
-        print(" Done.")
+            
+        with open(txt_path, "w", encoding="utf-8") as tf:
+            tf.write(caption)
         count += 1
+        print(f"   [{count}/{len(files)}] Done.")
 
     print(f"✅ Captions complete.")
-
-if __name__ == "__main__":
-    run("test_slug")
