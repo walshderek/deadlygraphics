@@ -15,8 +15,7 @@ def generate_prompt(trigger, mode):
                 f"2. Describe CLOTHING, BACKGROUND, POSE, LIGHTING.\n"
                 f"3. Do NOT describe facial features, makeup, or hairstyle.\n"
                 f"4. Keep it to one concise paragraph.")
-    else:
-        return base + " Describe everything."
+    return base + " Describe everything."
 
 def run(slug, model="moondream"):
     config = utils.load_config(slug)
@@ -27,13 +26,12 @@ def run(slug, model="moondream"):
     out_dir = path / utils.DIRS['caption']
     out_dir.mkdir(parents=True, exist_ok=True)
     
-    # Initialize Clients
     ollama_client = None
     qwen_processor = None
     qwen_model = None
     
     if model == "qwen-vl":
-        print("⏳ Loading Qwen-VL Model (this may take time)...")
+        print("⏳ Loading Qwen-VL Model...")
         from transformers import QwenVLProcessor, QwenVLForConditionalGeneration
         import torch
         qwen_path = utils.ROOT_DIR / "models" / "qwen-vl"
@@ -47,20 +45,15 @@ def run(slug, model="moondream"):
         try:
             ollama_client = ollama.Client(host=OLLAMA_HOST)
             ollama_client.ps()
-            print("✅ Connected to Ollama.")
-        except Exception as e:
-            print(f"❌ Ollama connection failed: {e}")
-            return
+        except:
+            print("❌ Ollama connection failed."); return
 
-    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png'))]
+    files = [f for f in os.listdir(in_dir) if f.lower().endswith('.jpg')]
     print(f"📝 Captioning {len(files)} images with {model}...")
 
-    count = 0
-    for f in files:
+    for i, f in enumerate(files, 1):
         txt_path = out_dir / (os.path.splitext(f)[0] + ".txt")
-        if txt_path.exists():
-            count += 1
-            continue
+        if txt_path.exists(): continue
             
         img_path = in_dir / f
         caption = ""
@@ -74,11 +67,9 @@ def run(slug, model="moondream"):
             inputs = inputs.to(qwen_model.device)
             outputs = qwen_model.generate(**inputs, max_new_tokens=256)
             caption = qwen_processor.decode(outputs[0], skip_special_tokens=True)
-            # Cleanup Qwen output
-            if "Describe the image" in caption: 
+            if "concise paragraph." in caption:
                 caption = caption.split("concise paragraph.")[-1].strip()
-
-        else: # Moondream via Ollama
+        else:
             with open(img_path, "rb") as ifile:
                 b64 = base64.b64encode(ifile.read()).decode('utf-8')
             res = ollama_client.chat(
@@ -88,15 +79,9 @@ def run(slug, model="moondream"):
             )
             caption = res['message']['content'].replace('\n', ' ').strip()
 
-        # Enforcement
         if not caption.startswith(trigger):
             caption = f"{trigger}, {caption}"
-        if not caption or len(caption) < 10:
-            caption = f"{trigger}, a person."
             
         with open(txt_path, "w", encoding="utf-8") as tf:
             tf.write(caption)
-        count += 1
-        print(f"   [{count}/{len(files)}] Done.")
-
-    print(f"✅ Captions complete.")
+        print(f"   [{i}/{len(files)}] Done.")

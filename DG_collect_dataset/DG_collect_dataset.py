@@ -13,7 +13,7 @@ except ImportError as e:
     print(f"❌ Critical Error: Could not import 'utils' from {CORE_DIR}.")
     sys.exit(1)
 
-# Ensure environment is bootstrapped (install reqs)
+# Ensure environment is bootstrapped
 utils.bootstrap(install_reqs=True)
 
 def load_core_module(name):
@@ -29,11 +29,11 @@ mod_crop = load_core_module("02_crop")
 mod_caption = load_core_module("03_caption")
 mod_publish = load_core_module("04_publish")
 
-def run_pipeline(full_name, limit=100, gender=None, model="moondream"):
+def run_pipeline(full_name, limit=100, gender=None, model="moondream", trigger=None):
     print(f"🚀 Pipeline Started: {full_name}")
     
     # Step 1: Scrape
-    slug = mod_scrape.run(full_name, limit, gender)
+    slug = mod_scrape.run(full_name, limit, gender, trigger)
     if not slug:
         return
 
@@ -51,8 +51,12 @@ def run_pipeline(full_name, limit=100, gender=None, model="moondream"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("name", nargs="?", help="Subject Full Name")
-    parser.add_argument("--limit", type=int, default=100)
+    # Support both --count (old) and --limit (new)
+    parser.add_argument("--limit", type=int, default=100, help="Max images to download")
+    parser.add_argument("--count", type=int, help="Alias for --limit") 
+    
     parser.add_argument("--gender", choices=["m", "f"])
+    parser.add_argument("--trigger", type=str, help="Manual trigger word")
     parser.add_argument("--only-step", type=int, help="Run specific step (1-4)")
     parser.add_argument("--model", default="moondream", choices=["moondream", "qwen-vl"], help="Caption model")
     
@@ -61,6 +65,9 @@ if __name__ == "__main__":
     if not args.name:
         parser.print_help()
         sys.exit(1)
+
+    # Handle alias
+    limit = args.count if args.count else args.limit
 
     if args.only_step:
         slug = utils.slugify(args.name)
@@ -73,7 +80,7 @@ if __name__ == "__main__":
         if args.only_step in steps:
             print(f"🚀 Running Step {args.only_step} for {slug}...")
             if args.only_step == 1:
-                steps[1].run(args.name, args.limit, args.gender)
+                steps[1].run(args.name, limit, args.gender, args.trigger)
             elif args.only_step == 3:
                 steps[3].run(slug, model=args.model)
             else:
@@ -81,4 +88,4 @@ if __name__ == "__main__":
         else:
             print("❌ Invalid step number. Use 1-4.")
     else:
-        run_pipeline(args.name, args.limit, args.gender, args.model)
+        run_pipeline(args.name, limit, args.gender, args.model, args.trigger)

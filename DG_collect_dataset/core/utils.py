@@ -23,7 +23,7 @@ DIRS = {
     "publish": "03_publish"
 }
 
-# Musubi Tuner Paths (Dual OS Support)
+# Musubi Tuner Paths
 MUSUBI_PATHS = {
     'wsl_app': "/home/seanf/ai/apps/musubi-tuner",
     'wsl_models': "/home/seanf/ai/models",
@@ -32,7 +32,6 @@ MUSUBI_PATHS = {
 }
 
 def install_package(package_name):
-    """Installs a package via pip."""
     print(f"📦 Installing missing dependency: {package_name}...")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
@@ -41,10 +40,10 @@ def install_package(package_name):
         print(f"❌ Failed to install {package_name}. Error: {e}")
 
 def bootstrap(install_reqs=True):
-    """Ensures environment variables and dependencies are set up."""
     if not install_reqs: return
+    
+    os.environ['OLLAMA_MODELS'] = "/mnt/c/AI/models/LLM"
 
-    # Install Core Deps
     try: import deepface
     except ImportError: install_package("deepface tf-keras opencv-python")
     
@@ -57,7 +56,7 @@ def bootstrap(install_reqs=True):
     try: import huggingface_hub
     except ImportError: install_package("huggingface_hub")
 
-    # Qwen-VL Download Logic
+    # Qwen-VL Download
     from huggingface_hub import snapshot_download
     models_dir = ROOT_DIR / "models"
     models_dir.mkdir(exist_ok=True)
@@ -72,11 +71,9 @@ def bootstrap(install_reqs=True):
             print(f"⚠️ Failed to download Qwen-VL: {e}")
 
 def slugify(text):
-    """Simple slugify: 'Ed Milliband' -> 'edmilliband'"""
     return re.sub(r'[\W_]+', '', text.lower()).strip('')
 
 def gen_trigger(name):
-    """Generates trigger: First 2 letters (Upper) + Random 100-999 + Last Initial"""
     parts = name.split()
     first = parts[0].upper()[:2]
     last = parts[-1].upper()[0] if len(parts) > 1 else "X"
@@ -101,5 +98,12 @@ def get_windows_unc_path(wsl_path):
     return f"\\\\wsl.localhost\\Ubuntu\\{clean_path}"
 
 def update_trigger_db(slug, trigger, full_name):
-    # Placeholder for database update logic
-    pass
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    row = [slug, trigger, full_name]
+    file_exists = DB_PATH.exists()
+    
+    with open(DB_PATH, 'a', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["slug", "trigger", "name"])
+        writer.writerow(row)
