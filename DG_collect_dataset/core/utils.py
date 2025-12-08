@@ -15,9 +15,6 @@ LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs"
 LINUX_DATASETS_ROOT = ROOT_DIR / "datasets"
 DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
 
-# --- CENTRAL MODEL STORE (The C: Drive Path) ---
-MODEL_STORE_ROOT = Path("/mnt/c/AI/models/LLM")
-
 # --- UNIFIED DIRECTORY SCHEMA ---
 DIRS = {
     "scrape": "00_scraped",
@@ -36,6 +33,9 @@ MUSUBI_PATHS = {
     'win_models': r"\\wsl.localhost\Ubuntu\home\seanf\ai\models"
 }
 
+# Central Model Store (C: Drive)
+MODEL_STORE_ROOT = Path("/mnt/c/AI/models/LLM")
+
 def install_package(package_name):
     print(f"📦 Installing missing dependency: {package_name}...")
     try:
@@ -47,7 +47,6 @@ def install_package(package_name):
 def bootstrap(install_reqs=True):
     if not install_reqs: return
     
-    # 1. TELL OLLAMA WHERE THE MODELS ARE
     os.environ['OLLAMA_MODELS'] = str(MODEL_STORE_ROOT)
 
     try: import deepface
@@ -61,20 +60,15 @@ def bootstrap(install_reqs=True):
 
     try: import huggingface_hub
     except ImportError: install_package("huggingface_hub")
-    
     try: from PIL import Image
     except ImportError: install_package("Pillow")
-    
     try: import requests
     except ImportError: install_package("requests")
 
-    # 2. QWEN-VL (HuggingFace) SETUP
-    # Target: /mnt/c/AI/models/LLM/QWEN/qwen-vl
+    # Qwen-VL Download (To C: Drive)
     from huggingface_hub import snapshot_download
-    
     qwen_dir = MODEL_STORE_ROOT / "QWEN" / "qwen-vl"
     
-    # Only download if not present
     if not qwen_dir.exists():
         print(f"⬇️  Downloading Qwen-VL to {qwen_dir}...")
         try:
@@ -85,7 +79,10 @@ def bootstrap(install_reqs=True):
             print(f"⚠️ Failed to download Qwen-VL: {e}")
 
 def slugify(text):
-    return re.sub(r'[\W_]+', '', text.lower()).strip('')
+    # Keep alphanumeric, spaces, hyphens, underscores
+    text = re.sub(r'[^\w\s-]', '', text.lower())
+    # Convert spaces/hyphens to single underscore
+    return re.sub(r'[-\s]+', '_', text).strip('_')
 
 def gen_trigger(name):
     parts = name.split()

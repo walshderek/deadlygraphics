@@ -11,7 +11,7 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 def download_image(url, save_path):
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
         if response.status_code == 200:
             with open(save_path, 'wb') as f:
                 f.write(response.content)
@@ -21,6 +21,7 @@ def download_image(url, save_path):
 
 def scrape_bing_playwright(query, limit, save_dir, prefix):
     print(f"--> Launching Playwright for Bing: '{query}'")
+    # HDRSC3 + first=1 forces better initial load
     search_url = f"https://www.bing.com/images/search?q={quote_plus(query)}&form=HDRSC3&first=1"
     
     with sync_playwright() as p:
@@ -30,12 +31,12 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         time.sleep(2)
         
         urls = set()
-        stagnation_counter = 0
+        stagnation = 0
         
         print(f"--> Scrolling to find {limit} images...")
         
-        # Loop until we have enough URLs or we give up after repeated failures
-        while len(urls) < limit:
+        # Loop until we hit limit or stagnation exceeds threshold
+        while len(urls) < limit and stagnation < 5:
             prev_len = len(urls)
             
             # 1. Scroll
@@ -55,32 +56,24 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
                             urls.add(img_url)
                     except: pass
             
-            print(f"    Found {len(urls)} unique URLs...")
-            
-            # 3. Check Progress
+            # 3. Check for Stagnation
             if len(urls) == prev_len:
-                stagnation_counter += 1
+                stagnation += 1
+                print(f"    Stagnation {stagnation}/5 (Found: {len(urls)}) - Attempting click...")
                 
-                # Try clicking "See more" if we are stuck
-                if stagnation_counter >= 1:
-                    try:
-                        # Prefer the input selector which is standard for Bing
-                        if page.is_visible("input[value*='See more']"):
-                            print("    Clicking 'See more images'...")
-                            page.click("input[value*='See more']", timeout=1000)
-                            time.sleep(2)
-                        elif page.is_visible("a.see_more_btn"):
-                            page.click("a.see_more_btn", timeout=1000)
-                            time.sleep(2)
-                    except: pass
-                
-                # Hard stop if stuck for too long
-                if stagnation_counter > 4:
-                    print("    ⚠️ Stagnation limit reached. Stopping scrape.")
-                    break
+                # Attempt to click "See More"
+                try:
+                    if page.is_visible("input[value*='See more']"):
+                        page.click("input[value*='See more']", timeout=1000)
+                    elif page.is_visible(".btn_seemore"):
+                        page.click(".btn_seemore", timeout=1000)
+                    elif page.is_visible("a.see_more_btn"):
+                        page.click("a.see_more_btn", timeout=1000)
+                    time.sleep(2)
+                except: pass
             else:
-                # We found images, reset counter
-                stagnation_counter = 0
+                stagnation = 0 # Reset if we found new images
+                print(f"    Found {len(urls)} unique URLs...")
 
         browser.close()
         
