@@ -38,7 +38,7 @@ def run(slug):
             
             face = max(faces, key=lambda x: x['facial_area']['w'] * x['facial_area']['h'])
             
-            # Confidence Check
+            # Confidence Check Fix
             if face['confidence'] < 0.5:
                 continue
                 

@@ -15,12 +15,17 @@ LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs"
 LINUX_DATASETS_ROOT = ROOT_DIR / "datasets"
 DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
 
-# Directory Structure Map
+# --- CENTRAL MODEL STORE (The C: Drive Path) ---
+MODEL_STORE_ROOT = Path("/mnt/c/AI/models/LLM")
+
+# --- UNIFIED DIRECTORY SCHEMA ---
 DIRS = {
     "scrape": "00_scraped",
     "crop": "01_cropped",
     "caption": "02_captions",
-    "publish": "03_publish"
+    "publish": "03_publish",
+    "master": "03_publish/1024",
+    "downsample": "03_publish",
 }
 
 # Musubi Tuner Paths
@@ -42,7 +47,8 @@ def install_package(package_name):
 def bootstrap(install_reqs=True):
     if not install_reqs: return
     
-    os.environ['OLLAMA_MODELS'] = "/mnt/c/AI/models/LLM"
+    # 1. TELL OLLAMA WHERE THE MODELS ARE
+    os.environ['OLLAMA_MODELS'] = str(MODEL_STORE_ROOT)
 
     try: import deepface
     except ImportError: install_package("deepface tf-keras opencv-python")
@@ -62,16 +68,18 @@ def bootstrap(install_reqs=True):
     try: import requests
     except ImportError: install_package("requests")
 
-    # Qwen-VL Download
+    # 2. QWEN-VL (HuggingFace) SETUP
+    # Target: /mnt/c/AI/models/LLM/QWEN/qwen-vl
     from huggingface_hub import snapshot_download
-    models_dir = ROOT_DIR / "models"
-    models_dir.mkdir(exist_ok=True)
-    qwen_path = models_dir / "qwen-vl"
     
-    if not qwen_path.exists():
-        print("⬇️  Downloading Qwen-VL model (Qwen/Qwen3-VL-4B-Instruct)...")
+    qwen_dir = MODEL_STORE_ROOT / "QWEN" / "qwen-vl"
+    
+    # Only download if not present
+    if not qwen_dir.exists():
+        print(f"⬇️  Downloading Qwen-VL to {qwen_dir}...")
         try:
-            snapshot_download(repo_id="Qwen/Qwen3-VL-4B-Instruct", local_dir=qwen_path)
+            qwen_dir.mkdir(parents=True, exist_ok=True)
+            snapshot_download(repo_id="Qwen/Qwen3-VL-4B-Instruct", local_dir=qwen_dir)
             print("✅ Qwen-VL downloaded.")
         except Exception as e:
             print(f"⚠️ Failed to download Qwen-VL: {e}")
