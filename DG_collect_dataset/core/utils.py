@@ -79,8 +79,10 @@ def bootstrap(install_reqs=True):
             print(f"⚠️ Failed to download Qwen-VL: {e}")
 
 def slugify(text):
-    # Fix: Replaces ANY non-word character sequence with a SINGLE underscore
-    return re.sub(r'[\W]+', '_', text.lower()).strip('_')
+    # 1. Allow alphanumeric, spaces, hyphens
+    text = re.sub(r'[^\w\s-]', '', text.lower())
+    # 2. Convert spaces/hyphens to underscore
+    return re.sub(r'[-\s]+', '_', text).strip('_')
 
 def gen_trigger(name):
     parts = name.split()

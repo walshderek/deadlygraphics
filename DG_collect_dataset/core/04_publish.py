@@ -70,7 +70,6 @@ pause
 """
 
 def generate_sh(slug, toml_path_wsl):
-    # Fix: Added missing args to match BAT
     return f"""#!/bin/bash
 WAN_DIR="{utils.MUSUBI_PATHS['wsl_app']}"
 CFG="{toml_path_wsl}"
@@ -89,13 +88,11 @@ accelerate launch --num_processes 1 "wan_train_network.py" \\
   --optimizer_type AdamW8bit \\
   --max_train_epochs 35 \\
   --save_every_n_epochs 5 \\
-  --t5 "${{T5}}" \\
-  --vae "${{VAE}}" \\
-  --vae_dtype float16 \\
   --timestep_boundary 875 \\
   --timestep_sampling logsnr \\
   --vae_cache_cpu \\
   --persistent_data_loader_workers \\
+  --vae_dtype float16 \\
   --sdpa
 """
 
@@ -147,13 +144,12 @@ def run(slug):
     
     win_toml_c_path = f"{utils.MUSUBI_PATHS['win_app']}\\TOML\\{toml_win_name}"
     
-    # Write Local Copies
     with open(publish_root / toml_win_name, "w") as f:
         f.write(generate_toml(win_unc_img_path, TARGET_RES))
+    
     with open(publish_root / bat_win_name, "w") as f:
         f.write(generate_bat(slug, win_toml_c_path))
     
-    # Write to Windows UNC (Best Effort)
     try:
         win_toml_dest = Path(f"{utils.get_windows_unc_path(str(Path(utils.MUSUBI_PATHS['wsl_app']) / 'TOML'))}\\{toml_win_name}".replace("/", "\\"))
         win_bat_dest = Path(f"{utils.get_windows_unc_path(str(Path(utils.MUSUBI_PATHS['wsl_app']) / 'BAT'))}\\{bat_win_name}".replace("/", "\\"))

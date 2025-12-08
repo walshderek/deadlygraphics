@@ -38,23 +38,30 @@ def run(slug):
             
             face = max(faces, key=lambda x: x['facial_area']['w'] * x['facial_area']['h'])
             
-            # Confidence Check Fix
+            # Strict Confidence
             if face['confidence'] < 0.5:
                 continue
                 
             fa = face["facial_area"]
             x, y, w, h = int(fa["x"]), int(fa["y"]), int(fa["w"]), int(fa["h"])
             
+            # Enforce Square Crop (Zoom 2.0x Context)
             center_x = x + w / 2
             center_y = y + h / 2
-            size = int(max(w, h) * 2.0)
+            
+            # Use max dim to ensure square
+            max_dim = max(w, h)
+            size = int(max_dim * 2.0)
             
             h_img, w_img = cv2_img.shape[:2]
+            
             x1 = max(0, int(center_x - size / 2))
             y1 = max(0, int(center_y - size / 2))
             x2 = min(w_img, int(center_x + size / 2))
             y2 = min(h_img, int(center_y + size / 2))
             
+            # Ensure strict square output if possible
+            # (Padding will be handled in publish if crop hits edges)
             cropped = cv2_img[y1:y2, x1:x2]
             
             save_path = out_dir / f"{os.path.splitext(f)[0]}.jpg"

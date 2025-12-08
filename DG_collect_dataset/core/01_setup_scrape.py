@@ -30,12 +30,11 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         time.sleep(2)
         
         urls = set()
-        stagnation_counter = 0
+        stagnation = 0
         
         print(f"--> Scrolling to find {limit} images...")
         
-        # Extended Stagnation Limit (10)
-        while len(urls) < limit and stagnation_counter < 10:
+        while len(urls) < limit and stagnation < 15:
             prev_len = len(urls)
             
             # 1. Scroll
@@ -57,30 +56,31 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
             
             # 3. Check for Stagnation
             if len(urls) == prev_len:
-                stagnation_counter += 1
+                stagnation += 1
+                print(f"    Stagnation {stagnation}/15 (Found: {len(urls)}) - Attempting click...")
                 
                 try:
                     if page.is_visible("input[value*='See more']"):
-                        print(f"    Stagnation {stagnation_counter}/10 - Clicking 'See more'...")
                         page.click("input[value*='See more']", timeout=1000)
                         time.sleep(2)
-                    elif page.is_visible("a.see_more_btn"):
-                        page.click("a.see_more_btn", timeout=1000)
+                    elif page.is_visible(".btn_seemore"):
+                        page.click(".btn_seemore", timeout=1000)
                         time.sleep(2)
                 except: pass
             else:
-                stagnation_counter = 0
+                stagnation = 0
                 print(f"    Found {len(urls)} unique URLs...")
 
         browser.close()
         
     print(f"--> Downloading {len(urls)} images...")
     count = 0
-    for i, url in enumerate(urls):
+    # Start at 1
+    for i, url in enumerate(urls, 1):
         ext = os.path.splitext(url)[1].lower()
         if ext not in ALLOWED_EXTENSIONS: ext = ".jpg"
         
-        filename = f"{prefix}_{i:03d}{ext}"
+        filename = f"{prefix}_{i:04d}{ext}"
         if download_image(url, save_dir / filename):
             print(f"    Downloaded: {filename}")
             count += 1
