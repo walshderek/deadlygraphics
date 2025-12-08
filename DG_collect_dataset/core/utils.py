@@ -33,7 +33,7 @@ MUSUBI_PATHS = {
     'win_models': r"\\wsl.localhost\Ubuntu\home\seanf\ai\models"
 }
 
-# Central Model Store (C: Drive)
+# Central Model Store
 MODEL_STORE_ROOT = Path("/mnt/c/AI/models/LLM")
 
 def install_package(package_name):
@@ -79,10 +79,9 @@ def bootstrap(install_reqs=True):
             print(f"⚠️ Failed to download Qwen-VL: {e}")
 
 def slugify(text):
-    # 1. Allow alphanumeric, spaces, hyphens
-    text = re.sub(r'[^\w\s-]', '', text.lower())
-    # 2. Convert spaces/hyphens to underscore
-    return re.sub(r'[-\s]+', '_', text).strip('_')
+    # Fix: Replace all non-word chars with underscore, ensure no double underscores
+    clean = re.sub(r'[\W]+', '_', text.lower()).strip('_')
+    return clean
 
 def gen_trigger(name):
     parts = name.split()

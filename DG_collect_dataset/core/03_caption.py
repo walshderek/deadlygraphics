@@ -44,34 +44,33 @@ def ensure_model(client, model_name):
     except: pass
 
 def generate_prompt(trigger, mode, gender_str="person"):
-    # Updated: "ohwx is a man"
-    base = f"{trigger} is a {gender_str}. "
     if mode == "fixed":
-        return (f"{base}\nDescribe the image for an AI training dataset.\n"
+        return (f"Photo of {trigger}, a {gender_str}.\n"
                 f"RULES:\n"
-                f"1. Start the sentence exactly with '{trigger}, '.\n"
-                f"2. Describe CLOTHING, BACKGROUND, POSE, and LIGHTING.\n"
-                f"3. Do NOT describe facial features, makeup, or hairstyle.\n"
-                f"4. Keep it to one concise paragraph.")
-    return base + " Describe everything."
+                f"1. Describe CLOTHING, BACKGROUND, POSE, and LIGHTING.\n"
+                f"2. Do NOT describe facial features, makeup, or hairstyle.\n"
+                f"3. Keep it to one concise paragraph.")
+    return f"Photo of {trigger}, a {gender_str}. Describe everything visible."
 
 def clean_caption(text, trigger):
-    """Regex stripping of hallucinated meta-text."""
+    """Aggressive regex cleaning."""
     clean = text.strip()
     
-    # Regex to catch "An AI...", "The image shows...", etc.
-    # (?i) makes it case insensitive
+    # Remove "An AI...", "The image shows...", etc case-insensitive
     clean = re.sub(r"(?i)^(an ai training dataset (image )?shows|the image shows|the image features|in this image,|a photo of|describe the image:)\s*", "", clean)
     
-    # Handle "shows a..." connector
-    if clean.lower().startswith("shows "):
-        clean = clean[6:].strip()
-
     clean = clean.lstrip(",. :")
     
-    # Force Trigger Start
-    if not clean.lower().startswith(trigger.lower()):
+    # Fix: Ensure we don't double up ("ohwx, ohwx")
+    trigger_lower = trigger.lower()
+    clean_lower = clean.lower()
+    
+    if not clean_lower.startswith(trigger_lower):
         clean = f"{trigger}, {clean}"
+    
+    # Final fallback if empty
+    if len(clean) < len(trigger) + 5:
+        clean = f"{trigger}, a person."
         
     return clean
 
@@ -126,12 +125,11 @@ def run(slug, model="moondream", mode="fixed"):
                 if "concise paragraph." in caption:
                     caption = caption.split("concise paragraph.")[-1].strip()
             else:
-                # MOONDREAM
                 with open(img_path, "rb") as ifile:
                     b64 = base64.b64encode(ifile.read()).decode('utf-8')
                 
                 res = client.chat(
-                    model=model,
+                    model='moondream', 
                     messages=[{'role': 'user', 'content': prompt, 'images': [b64]}],
                     options={'timeout': 60} 
                 )

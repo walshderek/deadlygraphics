@@ -30,7 +30,7 @@ def run_pipeline(full_name, limit=100, gender=None, model="moondream", trigger=N
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("name", nargs="?")
+    parser.add_argument("name", nargs="?", help="Subject Full Name")
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--count", type=int) 
     parser.add_argument("--gender", choices=["m", "f"])

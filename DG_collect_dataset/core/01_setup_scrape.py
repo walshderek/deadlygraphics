@@ -34,7 +34,8 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         
         print(f"--> Scrolling to find {limit} images...")
         
-        while len(urls) < limit and stagnation < 15:
+        # Extended Stagnation Limit (20)
+        while len(urls) < limit and stagnation < 20:
             prev_len = len(urls)
             
             # 1. Scroll
@@ -57,25 +58,26 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
             # 3. Check for Stagnation
             if len(urls) == prev_len:
                 stagnation += 1
-                print(f"    Stagnation {stagnation}/15 (Found: {len(urls)}) - Attempting click...")
                 
+                # Attempt aggressive click
                 try:
                     if page.is_visible("input[value*='See more']"):
+                        print(f"    Stagnation {stagnation}/20 - Clicking 'See more'...")
                         page.click("input[value*='See more']", timeout=1000)
                         time.sleep(2)
-                    elif page.is_visible(".btn_seemore"):
-                        page.click(".btn_seemore", timeout=1000)
+                    elif page.is_visible("a.see_more_btn"):
+                        page.click("a.see_more_btn", timeout=1000)
                         time.sleep(2)
                 except: pass
             else:
-                stagnation = 0
+                stagnation = 0 # Reset on progress
                 print(f"    Found {len(urls)} unique URLs...")
 
         browser.close()
         
     print(f"--> Downloading {len(urls)} images...")
     count = 0
-    # Start at 1
+    # Start at 0001
     for i, url in enumerate(urls, 1):
         ext = os.path.splitext(url)[1].lower()
         if ext not in ALLOWED_EXTENSIONS: ext = ".jpg"
