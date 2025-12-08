@@ -12,7 +12,6 @@ ROOT_DIR = Path(__file__).parent.parent
 VENV_PATH = ROOT_DIR / ".venv"
 REQUIREMENTS_PATH = ROOT_DIR / "core" / "requirements.txt"
 LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs"
-LINUX_DATASETS_ROOT = ROOT_DIR / "datasets"
 DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
 
 # --- UNIFIED DIRECTORY SCHEMA ---
@@ -20,9 +19,11 @@ DIRS = {
     "scrape": "00_scraped",
     "crop": "01_cropped",
     "caption": "02_captions",
-    "publish": "03_publish",
-    "master": "03_publish/1024",
-    "downsample": "03_publish",
+    "clean": "03_cleaned",
+    "qc": "04_qc",
+    "publish": "05_publish",
+    "master": "05_publish/1024", # Back-compat
+    "downsample": "05_publish",  # Back-compat
 }
 
 # Musubi Tuner Paths
@@ -40,48 +41,43 @@ def install_package(package_name):
     print(f"📦 Installing missing dependency: {package_name}...")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
-        print(f"✅ Installed {package_name}")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to install {package_name}. Error: {e}")
+    except subprocess.CalledProcessError: pass
 
 def bootstrap(install_reqs=True):
     if not install_reqs: return
     
     os.environ['OLLAMA_MODELS'] = str(MODEL_STORE_ROOT)
 
+    # Core Deps
     try: import deepface
     except ImportError: install_package("deepface tf-keras opencv-python")
-    
     try: import playwright
     except ImportError: 
         install_package("playwright")
-        print("📦 Installing Playwright browsers...")
         subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
-
     try: import huggingface_hub
     except ImportError: install_package("huggingface_hub")
-    try: from PIL import Image
-    except ImportError: install_package("Pillow")
     try: import requests
     except ImportError: install_package("requests")
+    
+    # Stretch Goal Deps (Clean/QC)
+    try: import diffusers
+    except ImportError: install_package("diffusers transformers accelerate scipy")
+    try: import sklearn
+    except ImportError: install_package("scikit-learn")
 
     # Qwen-VL Download
     from huggingface_hub import snapshot_download
     qwen_dir = MODEL_STORE_ROOT / "QWEN" / "qwen-vl"
-    
     if not qwen_dir.exists():
-        print(f"⬇️  Downloading Qwen-VL to {qwen_dir}...")
         try:
             qwen_dir.mkdir(parents=True, exist_ok=True)
             snapshot_download(repo_id="Qwen/Qwen3-VL-4B-Instruct", local_dir=qwen_dir)
-            print("✅ Qwen-VL downloaded.")
-        except Exception as e:
-            print(f"⚠️ Failed to download Qwen-VL: {e}")
+        except: pass
 
 def slugify(text):
-    # Fix: Replace all non-word chars with underscore, ensure no double underscores
-    clean = re.sub(r'[\W]+', '_', text.lower()).strip('_')
-    return clean
+    # Fix: Correctly replace non-word chars with underscore
+    return re.sub(r'[\W]+', '_', text.lower()).strip('_')
 
 def gen_trigger(name):
     parts = name.split()
@@ -111,9 +107,7 @@ def update_trigger_db(slug, trigger, full_name):
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     row = [slug, trigger, full_name]
     file_exists = DB_PATH.exists()
-    
     with open(DB_PATH, 'a', newline='') as f:
         writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["slug", "trigger", "name"])
+        if not file_exists: writer.writerow(["slug", "trigger", "name"])
         writer.writerow(row)

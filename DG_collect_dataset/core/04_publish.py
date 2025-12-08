@@ -88,11 +88,13 @@ accelerate launch --num_processes 1 "wan_train_network.py" \\
   --optimizer_type AdamW8bit \\
   --max_train_epochs 35 \\
   --save_every_n_epochs 5 \\
+  --t5 "${{T5}}" \\
+  --vae "${{VAE}}" \\
+  --vae_dtype float16 \\
   --timestep_boundary 875 \\
   --timestep_sampling logsnr \\
   --vae_cache_cpu \\
   --persistent_data_loader_workers \\
-  --vae_dtype float16 \\
   --sdpa
 """
 
@@ -103,8 +105,8 @@ def run(slug):
     trigger = config['trigger']
     path = utils.get_project_path(slug)
     
-    in_dir = path / utils.DIRS['crop']
-    caption_dir = path / utils.DIRS['caption']
+    # CHANGE: Read from QC directory
+    in_dir = path / utils.DIRS['qc']
     publish_root = path / utils.DIRS['publish']
     if publish_root.exists(): shutil.rmtree(publish_root)
     publish_root.mkdir(parents=True, exist_ok=True)
@@ -117,8 +119,8 @@ def run(slug):
     for f in files:
         if resize_pad_to_square(in_dir / f, res_dir_1024 / f, TARGET_SIZE):
             txt = os.path.splitext(f)[0] + ".txt"
-            if (caption_dir / txt).exists():
-                shutil.copy(caption_dir / txt, res_dir_1024 / txt)
+            if (in_dir / txt).exists():
+                shutil.copy(in_dir / txt, res_dir_1024 / txt)
 
     # 2. Downsamples
     for res in RESOLUTIONS:
@@ -141,12 +143,10 @@ def run(slug):
     
     toml_win_name = f"{slug}_{res_str}_win.toml"
     bat_win_name = f"train_{slug}_{res_str}.bat"
-    
     win_toml_c_path = f"{utils.MUSUBI_PATHS['win_app']}\\TOML\\{toml_win_name}"
     
     with open(publish_root / toml_win_name, "w") as f:
         f.write(generate_toml(win_unc_img_path, TARGET_RES))
-    
     with open(publish_root / bat_win_name, "w") as f:
         f.write(generate_bat(slug, win_toml_c_path))
     

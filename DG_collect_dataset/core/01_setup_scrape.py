@@ -30,19 +30,15 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         time.sleep(2)
         
         urls = set()
-        stagnation = 0
+        stagnation_counter = 0
         
         print(f"--> Scrolling to find {limit} images...")
         
-        # Extended Stagnation Limit (20)
-        while len(urls) < limit and stagnation < 20:
+        while len(urls) < limit and stagnation_counter < 15:
             prev_len = len(urls)
-            
-            # 1. Scroll
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
             
-            # 2. Extract
             thumbnails = page.query_selector_all("a.iusc")
             for thumb in thumbnails:
                 if len(urls) >= limit: break
@@ -51,33 +47,26 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
                     try:
                         data = json.loads(m)
                         img_url = data.get("murl")
-                        if img_url and img_url.startswith("http"): 
-                            urls.add(img_url)
+                        if img_url and img_url.startswith("http"): urls.add(img_url)
                     except: pass
             
-            # 3. Check for Stagnation
             if len(urls) == prev_len:
-                stagnation += 1
-                
-                # Attempt aggressive click
+                stagnation_counter += 1
                 try:
                     if page.is_visible("input[value*='See more']"):
-                        print(f"    Stagnation {stagnation}/20 - Clicking 'See more'...")
                         page.click("input[value*='See more']", timeout=1000)
-                        time.sleep(2)
-                    elif page.is_visible("a.see_more_btn"):
-                        page.click("a.see_more_btn", timeout=1000)
-                        time.sleep(2)
+                    elif page.is_visible(".btn_seemore"):
+                        page.click(".btn_seemore", timeout=1000)
+                    time.sleep(2)
                 except: pass
             else:
-                stagnation = 0 # Reset on progress
+                stagnation_counter = 0
                 print(f"    Found {len(urls)} unique URLs...")
 
         browser.close()
         
     print(f"--> Downloading {len(urls)} images...")
     count = 0
-    # Start at 0001
     for i, url in enumerate(urls, 1):
         ext = os.path.splitext(url)[1].lower()
         if ext not in ALLOWED_EXTENSIONS: ext = ".jpg"
@@ -96,17 +85,10 @@ def run(full_name, limit, gender, trigger_arg=None):
     scrape_dir = path / utils.DIRS['scrape']
     scrape_dir.mkdir(parents=True, exist_ok=True)
     
-    if not trigger_arg:
-        trigger = utils.gen_trigger(full_name)
-    else:
-        trigger = trigger_arg
+    if not trigger_arg: trigger = utils.gen_trigger(full_name)
+    else: trigger = trigger_arg
         
-    config = {
-        'prompt': full_name,
-        'trigger': trigger,
-        'count': limit,
-        'gender': gender
-    }
+    config = {'prompt': full_name, 'trigger': trigger, 'count': limit, 'gender': gender}
     utils.save_config(slug, config)
     utils.update_trigger_db(slug, trigger, full_name)
     print(f"🔑 Trigger Word: {trigger}")
