@@ -12,6 +12,7 @@ ROOT_DIR = Path(__file__).parent.parent
 VENV_PATH = ROOT_DIR / ".venv"
 REQUIREMENTS_PATH = ROOT_DIR / "core" / "requirements.txt"
 LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs"
+LINUX_DATASETS_ROOT = ROOT_DIR / "datasets"
 DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
 
 # --- UNIFIED DIRECTORY SCHEMA ---
@@ -22,8 +23,8 @@ DIRS = {
     "clean": "03_cleaned",
     "qc": "04_qc",
     "publish": "05_publish",
-    "master": "05_publish/1024", # Back-compat
-    "downsample": "05_publish",  # Back-compat
+    "master": "05_publish/1024",
+    "downsample": "05_publish",
 }
 
 # Musubi Tuner Paths
@@ -40,23 +41,29 @@ MODEL_STORE_ROOT = Path("/mnt/c/AI/models/LLM")
 def install_package(package_name):
     print(f"📦 Installing missing dependency: {package_name}...")
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
-    except subprocess.CalledProcessError: pass
+        # Fix: Split string into list so pip gets individual args
+        pkgs = package_name.split()
+        subprocess.check_call([sys.executable, "-m", "pip", "install"] + pkgs)
+        print(f"✅ Installed {package_name}")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to install {package_name}. Error: {e}")
 
 def bootstrap(install_reqs=True):
     if not install_reqs: return
     
     os.environ['OLLAMA_MODELS'] = str(MODEL_STORE_ROOT)
 
-    # Core Deps
     try: import deepface
     except ImportError: install_package("deepface tf-keras opencv-python")
+    
     try: import playwright
     except ImportError: 
         install_package("playwright")
         subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
+
     try: import huggingface_hub
     except ImportError: install_package("huggingface_hub")
+    
     try: import requests
     except ImportError: install_package("requests")
     
@@ -76,7 +83,6 @@ def bootstrap(install_reqs=True):
         except: pass
 
 def slugify(text):
-    # Fix: Correctly replace non-word chars with underscore
     return re.sub(r'[\W]+', '_', text.lower()).strip('_')
 
 def gen_trigger(name):
