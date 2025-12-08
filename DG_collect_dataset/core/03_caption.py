@@ -9,11 +9,9 @@ import utils
 # Force localhost for WSL
 OLLAMA_HOST = "http://127.0.0.1:11434"
 os.environ["OLLAMA_HOST"] = OLLAMA_HOST
-# Point to C: drive models
 os.environ["OLLAMA_MODELS"] = str(utils.MODEL_STORE_ROOT)
 
 def ensure_ollama_server():
-    """Checks if Ollama is running. If not, starts it."""
     try:
         client = ollama.Client(host=OLLAMA_HOST)
         client.list() 
@@ -45,42 +43,41 @@ def ensure_model(client, model_name):
     except: pass
 
 def generate_prompt(trigger, mode, gender_str="person"):
-    base = f"The person in this image is named {trigger}. "
+    # Updated Prompt Style: "Photo of..."
     if mode == "fixed":
-        return (f"{base}\nDescribe the image for an AI training dataset.\n"
+        return (f"Photo of {trigger}, a {gender_str}.\n"
                 f"RULES:\n"
-                f"1. Start the sentence exactly with '{trigger}, '.\n"
-                f"2. Describe CLOTHING, BACKGROUND, POSE, and LIGHTING.\n"
-                f"3. Do NOT describe facial features, makeup, or hairstyle.\n"
-                f"4. Keep it to one concise paragraph.")
-    return base + " Describe everything."
+                f"1. Describe CLOTHING, BACKGROUND, POSE, and LIGHTING.\n"
+                f"2. Do NOT describe facial features, makeup, or hairstyle.\n"
+                f"3. Keep it to one concise paragraph.")
+    return f"Photo of {trigger}, a {gender_str}. Describe everything visible."
 
 def clean_caption(text, trigger):
-    """Strips hallucinated meta-text."""
-    meta_phrases = [
-        "an ai training dataset image shows",
-        "an ai training dataset shows",
-        "the image shows",
-        "the image features",
-        "in this image,",
-        "a photo of",
-        "describe the image:"
+    """Aggressive stripping of hallucinated prefixes."""
+    clean = text.strip()
+    
+    # Specific phrases to split on
+    split_phrases = [
+        "An AI training dataset image shows",
+        "An AI training dataset shows",
+        "The image shows",
+        "The image features",
+        "features a "
     ]
     
-    clean = text.strip()
-    lower_clean = clean.lower()
-    
-    for phrase in meta_phrases:
-        if lower_clean.startswith(phrase):
-            clean = clean[len(phrase):].strip()
-            lower_clean = clean.lower()
-            
-    # Handle connecting words like "shows a..."
-    if clean.lower().startswith("shows "):
-        clean = clean[6:].strip()
+    for phrase in split_phrases:
+        if phrase.lower() in clean.lower():
+            # Split and take the part AFTER the phrase
+            try:
+                parts = re.split(phrase, clean, flags=re.IGNORECASE)
+                if len(parts) > 1:
+                    clean = parts[1].strip()
+            except: pass
 
-    clean = clean.lstrip(",. ")
+    # Cleanup start
+    clean = clean.lstrip(",. :")
     
+    # Force Trigger Start
     if not clean.lower().startswith(trigger.lower()):
         clean = f"{trigger}, {clean}"
         
@@ -90,7 +87,6 @@ def run(slug, model="moondream", mode="fixed"):
     config = utils.load_config(slug)
     if not config: return
     trigger = config['trigger']
-    
     gender_map = {'m': 'man', 'f': 'woman'}
     gender_str = gender_map.get(config.get('gender', 'm'), 'person')
 
@@ -122,14 +118,14 @@ def run(slug, model="moondream", mode="fixed"):
             
         img_path = in_dir / f
         caption = ""
-        final_prompt = generate_prompt(trigger, mode, gender_str)
+        prompt = generate_prompt(trigger, mode, gender_str)
         
         print(f"   [{i}/{len(files)}] Processing {f}...", end="", flush=True)
 
         try:
             if model == "qwen-vl":
                 inputs = qwen_processor.apply_chat_template(
-                    [{"role": "user", "content": final_prompt, "image": str(img_path)}],
+                    [{"role": "user", "content": prompt, "image": str(img_path)}],
                     return_tensors="pt"
                 )
                 inputs = inputs.to(qwen_model_obj.device)
@@ -138,13 +134,12 @@ def run(slug, model="moondream", mode="fixed"):
                 if "concise paragraph." in caption:
                     caption = caption.split("concise paragraph.")[-1].strip()
             else:
-                # MOONDREAM
                 with open(img_path, "rb") as ifile:
                     b64 = base64.b64encode(ifile.read()).decode('utf-8')
                 
                 res = client.chat(
-                    model=model,
-                    messages=[{'role': 'user', 'content': final_prompt, 'images': [b64]}],
+                    model='moondream', 
+                    messages=[{'role': 'user', 'content': prompt, 'images': [b64]}],
                     options={'timeout': 60} 
                 )
                 caption = res['message']['content'].replace('\n', ' ').strip()

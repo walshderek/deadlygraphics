@@ -65,7 +65,7 @@ def bootstrap(install_reqs=True):
     try: import requests
     except ImportError: install_package("requests")
 
-    # Qwen-VL Download (To C: Drive)
+    # Qwen-VL Download
     from huggingface_hub import snapshot_download
     qwen_dir = MODEL_STORE_ROOT / "QWEN" / "qwen-vl"
     
@@ -79,10 +79,8 @@ def bootstrap(install_reqs=True):
             print(f"⚠️ Failed to download Qwen-VL: {e}")
 
 def slugify(text):
-    # Keep alphanumeric, spaces, hyphens, underscores
-    text = re.sub(r'[^\w\s-]', '', text.lower())
-    # Convert spaces/hyphens to single underscore
-    return re.sub(r'[-\s]+', '_', text).strip('_')
+    # Fix: Replaces ANY non-word character sequence with a SINGLE underscore
+    return re.sub(r'[\W]+', '_', text.lower()).strip('_')
 
 def gen_trigger(name):
     parts = name.split()

@@ -21,7 +21,6 @@ def download_image(url, save_path):
 
 def scrape_bing_playwright(query, limit, save_dir, prefix):
     print(f"--> Launching Playwright for Bing: '{query}'")
-    # HDRSC3 + first=1 forces better initial load
     search_url = f"https://www.bing.com/images/search?q={quote_plus(query)}&form=HDRSC3&first=1"
     
     with sync_playwright() as p:
@@ -31,12 +30,12 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         time.sleep(2)
         
         urls = set()
-        stagnation = 0
+        stagnation_counter = 0
         
         print(f"--> Scrolling to find {limit} images...")
         
-        # Loop until we hit limit or stagnation exceeds threshold
-        while len(urls) < limit and stagnation < 5:
+        # Extended Stagnation Limit (10)
+        while len(urls) < limit and stagnation_counter < 10:
             prev_len = len(urls)
             
             # 1. Scroll
@@ -58,21 +57,19 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
             
             # 3. Check for Stagnation
             if len(urls) == prev_len:
-                stagnation += 1
-                print(f"    Stagnation {stagnation}/5 (Found: {len(urls)}) - Attempting click...")
+                stagnation_counter += 1
                 
-                # Attempt to click "See More"
                 try:
                     if page.is_visible("input[value*='See more']"):
+                        print(f"    Stagnation {stagnation_counter}/10 - Clicking 'See more'...")
                         page.click("input[value*='See more']", timeout=1000)
-                    elif page.is_visible(".btn_seemore"):
-                        page.click(".btn_seemore", timeout=1000)
+                        time.sleep(2)
                     elif page.is_visible("a.see_more_btn"):
                         page.click("a.see_more_btn", timeout=1000)
-                    time.sleep(2)
+                        time.sleep(2)
                 except: pass
             else:
-                stagnation = 0 # Reset if we found new images
+                stagnation_counter = 0
                 print(f"    Found {len(urls)} unique URLs...")
 
         browser.close()
