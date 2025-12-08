@@ -66,7 +66,7 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         browser.close()
         
     print(f"--> Downloading {len(urls)} images...")
-    count = 0
+    # Fix: Start numbering at 0001
     for i, url in enumerate(urls, 1):
         ext = os.path.splitext(url)[1].lower()
         if ext not in ALLOWED_EXTENSIONS: ext = ".jpg"
@@ -74,10 +74,9 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         filename = f"{prefix}_{i:04d}{ext}"
         if download_image(url, save_dir / filename):
             print(f"    Downloaded: {filename}")
-            count += 1
-            if count >= limit: break
+            if i >= limit: break
             
-    print(f"✅ Downloaded {count} images.")
+    print(f"✅ Downloaded images.")
 
 def run(full_name, limit, gender, trigger_arg=None):
     slug = utils.slugify(full_name)

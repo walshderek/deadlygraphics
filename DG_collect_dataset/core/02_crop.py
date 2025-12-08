@@ -12,7 +12,7 @@ def run(slug):
     out_dir = path / utils.DIRS['crop']
     out_dir.mkdir(parents=True, exist_ok=True)
     
-    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+    files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg', '.webp'))]
     print(f"--> [02_crop] Processing {len(files)} images...")
     
     count = 0
@@ -44,7 +44,7 @@ def run(slug):
             cropped = cv2_img[y1:y2, x1:x2]
             crop_pil = Image.fromarray(cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB))
             
-            # FORCE SQUARE
+            # FIX: FORCE SQUARE PADDING
             max_side = max(crop_pil.size)
             final_sq = ImageOps.pad(crop_pil, (max_side, max_side), color=(0,0,0), centering=(0.5, 0.5))
             

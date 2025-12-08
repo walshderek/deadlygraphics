@@ -12,6 +12,7 @@ ROOT_DIR = Path(__file__).parent.parent
 VENV_PATH = ROOT_DIR / ".venv"
 REQUIREMENTS_PATH = ROOT_DIR / "core" / "requirements.txt"
 LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs"
+LINUX_DATASETS_ROOT = ROOT_DIR / "datasets"
 DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
 
 # --- UNIFIED DIRECTORY SCHEMA ---
@@ -40,6 +41,7 @@ MODEL_STORE_ROOT = Path("/mnt/c/AI/models/LLM")
 def install_package(package_name):
     print(f"📦 Installing missing dependency: {package_name}...")
     try:
+        # Split string into list so pip gets individual args
         pkgs = package_name.split()
         subprocess.check_call([sys.executable, "-m", "pip", "install"] + pkgs)
         print(f"✅ Installed {package_name}")
@@ -51,37 +53,45 @@ def bootstrap(install_reqs=True):
     
     os.environ['OLLAMA_MODELS'] = str(MODEL_STORE_ROOT)
 
-    # Core Deps
     try: import deepface
     except ImportError: install_package("deepface tf-keras opencv-python")
+    
     try: import playwright
     except ImportError: 
         install_package("playwright")
         subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
+
     try: import huggingface_hub
     except ImportError: install_package("huggingface_hub")
+    
     try: import requests
     except ImportError: install_package("requests")
     
-    # Qwen/Advanced Deps
-    # Added qwen-vl-utils and accelerate for Qwen2.5-VL
-    try: import qwen_vl_utils
-    except ImportError: install_package("qwen-vl-utils accelerate transformers torch torchvision")
+    # Clean/QC dependencies
+    try: import diffusers
+    except ImportError: install_package("diffusers transformers accelerate scipy")
     try: import sklearn
     except ImportError: install_package("scikit-learn")
 
-    # Qwen-VL Download (Qwen2.5-VL-3B-Instruct)
+    # Qwen-VL Dependencies (Check individually to ensure updates)
+    try: import qwen_vl_utils
+    except ImportError: install_package("qwen-vl-utils")
+    
+    # FIX: Explicit check for bitsandbytes to ensure 4-bit loading works
+    try: import bitsandbytes
+    except ImportError: install_package("bitsandbytes")
+    
+    try: import accelerate
+    except ImportError: install_package("accelerate")
+
+    # Qwen-VL Download
     from huggingface_hub import snapshot_download
-    # Store in QWEN/Qwen2.5-VL-3B-Instruct
     qwen_dir = MODEL_STORE_ROOT / "QWEN" / "Qwen2.5-VL-3B-Instruct"
     if not qwen_dir.exists():
         try:
-            print(f"⬇️  Downloading Qwen2.5-VL to {qwen_dir}...")
             qwen_dir.mkdir(parents=True, exist_ok=True)
             snapshot_download(repo_id="Qwen/Qwen2.5-VL-3B-Instruct", local_dir=qwen_dir)
-            print("✅ Qwen-VL downloaded.")
-        except Exception as e:
-            print(f"⚠️ Failed to download Qwen-VL: {e}")
+        except: pass
 
 def slugify(text):
     return re.sub(r'[\W]+', '_', text.lower()).strip('_')
