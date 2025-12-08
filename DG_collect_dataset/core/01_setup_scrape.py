@@ -11,7 +11,8 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 def download_image(url, save_path):
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        # Timeout ensures we don't hang on bad links
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
         if response.status_code == 200:
             with open(save_path, 'wb') as f:
                 f.write(response.content)
@@ -21,7 +22,8 @@ def download_image(url, save_path):
 
 def scrape_bing_playwright(query, limit, save_dir, prefix):
     print(f"--> Launching Playwright for Bing: '{query}'")
-    search_url = f"https://www.bing.com/images/search?q={quote_plus(query)}&form=HDRSC3"
+    # HDRSC3 form often yields better infinite scroll results
+    search_url = f"https://www.bing.com/images/search?q={quote_plus(query)}&form=HDRSC3&first=1"
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -30,18 +32,19 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
         time.sleep(2)
         
         urls = set()
+        stagnation_counter = 0
+        
         print(f"--> Scrolling to find {limit} images...")
         
-        # Accumulation Loop Fix
         while len(urls) < limit:
-            prev_count = len(urls)
+            prev_len = len(urls)
             
-            # Scroll
+            # 1. Scroll to bottom
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
             
+            # 2. Extract Images
             thumbnails = page.query_selector_all("a.iusc")
-            
             for thumb in thumbnails:
                 if len(urls) >= limit: break
                 m = thumb.get_attribute("m")
@@ -55,18 +58,39 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
             
             print(f"    Found {len(urls)} unique URLs...")
             
-            # Break logic: If no new URLs found
-            if len(urls) == prev_count:
-                try:
-                    # Click logic with correct selector
-                    if page.is_visible("input[value='See more images']"):
-                        print("    Clicking 'See more images'...")
-                        page.click("input[value='See more images']", timeout=1000)
-                        time.sleep(2)
-                    else:
-                        break # No button and no new images
-                except:
-                    break # Error clicking or button gone
+            # 3. Handle Stagnation / Pagination
+            if len(urls) == prev_len:
+                stagnation_counter += 1
+                
+                # Attempt to click "See More" using multiple known selectors
+                clicked = False
+                selectors = [
+                    "input[value*='See more']", # Standard input button
+                    "a.see_more_btn",           # Link style
+                    ".btn_seemore",             # Generic class
+                    "#b_footer"                 # Sometimes clicking footer triggers load
+                ]
+                
+                for sel in selectors:
+                    try:
+                        if page.is_visible(sel):
+                            print(f"    Clicking '{sel}' to load more...")
+                            page.click(sel, timeout=1000)
+                            time.sleep(2)
+                            clicked = True
+                            break
+                    except: pass
+                
+                # If we clicked, reset counter to give it a chance to load
+                if clicked:
+                    stagnation_counter = 0
+                
+                # If we tried 3 times with no growth, assume end of results
+                if stagnation_counter > 3:
+                    print("    ⚠️ No new images found after retries. Stopping scrape.")
+                    break
+            else:
+                stagnation_counter = 0 # Reset if we found new images
 
         browser.close()
         
