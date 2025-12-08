@@ -41,12 +41,9 @@ set "DIT_LOW=%C_MODEL_BASE%\\diffusion-models\\Wan\\Wan2.2\\14B\\Wan_2_2_I2V\\fp
 set "DIT_HIGH=%C_MODEL_BASE%\\diffusion-models\\Wan\\Wan2.2\\14B\\Wan_2_2_I2V\\fp16\\wan2.2_t2v_high_noise_14B_fp16.safetensors"
 set "VAE=%C_MODEL_BASE%\\vae\\wan_2.1_vae.pth"
 set "T5=%C_MODEL_BASE%\\clip\\models_t5_umt5-xxl-enc-bf16.pth"
-
 call %WAN_ROOT%\\venv\\scripts\\activate
-
 python wan_cache_latents.py --dataset_config "%CFG%" --vae "%VAE%" --vae_dtype float16 --vae_cache_cpu
 python wan_cache_text_encoder_outputs.py --dataset_config "%CFG%" --t5 "%T5%" --batch_size 16 --fp8_t5
-
 accelerate launch --num_processes 1 "wan_train_network.py" ^
   --dataset_config "%CFG%" ^
   --output_dir "%OUT%" ^
@@ -69,18 +66,16 @@ accelerate launch --num_processes 1 "wan_train_network.py" ^
   --vae_cache_cpu ^
   --persistent_data_loader_workers ^
   --sdpa
-
 pause
 """
 
 def generate_sh(slug, toml_path_wsl):
+    # Fix: Added missing args to match BAT
     return f"""#!/bin/bash
 WAN_DIR="{utils.MUSUBI_PATHS['wsl_app']}"
 CFG="{toml_path_wsl}"
 OUT="${{WAN_DIR}}/outputs/{slug}"
-
 source ${{WAN_DIR}}/venv/bin/activate
-
 accelerate launch --num_processes 1 "wan_train_network.py" \\
   --dataset_config "${{CFG}}" \\
   --output_dir "${{OUT}}" \\
@@ -94,116 +89,79 @@ accelerate launch --num_processes 1 "wan_train_network.py" \\
   --optimizer_type AdamW8bit \\
   --max_train_epochs 35 \\
   --save_every_n_epochs 5 \\
+  --t5 "${{T5}}" \\
+  --vae "${{VAE}}" \\
+  --vae_dtype float16 \\
   --timestep_boundary 875 \\
   --timestep_sampling logsnr \\
   --vae_cache_cpu \\
   --persistent_data_loader_workers \\
-  --vae_dtype float16 \\
   --sdpa
 """
 
 def run(slug):
     print(f"=== PUBLISHING {slug} ===")
     config = utils.load_config(slug)
-    if not config: 
-        print("❌ No config found. Run Step 1 first.")
-        return
-        
+    if not config: return
     trigger = config['trigger']
     path = utils.get_project_path(slug)
     
     in_dir = path / utils.DIRS['crop']
     caption_dir = path / utils.DIRS['caption']
-    
-    # Unified Publish Dir
     publish_root = path / utils.DIRS['publish']
     if publish_root.exists(): shutil.rmtree(publish_root)
     publish_root.mkdir(parents=True, exist_ok=True)
 
     files = [f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png'))]
-    print(f"🖼️  Processing {len(files)} images for publish...")
 
-    # --- 1. Create Master 1024 ---
+    # 1. Master 1024
     res_dir_1024 = publish_root / "1024"
     res_dir_1024.mkdir(exist_ok=True)
-    
     for f in files:
         if resize_pad_to_square(in_dir / f, res_dir_1024 / f, TARGET_SIZE):
             txt = os.path.splitext(f)[0] + ".txt"
-            src_txt = caption_dir / txt
-            if src_txt.exists():
-                shutil.copy(src_txt, res_dir_1024 / txt)
+            if (caption_dir / txt).exists():
+                shutil.copy(caption_dir / txt, res_dir_1024 / txt)
 
-    # --- 2. Downsample (512, 256) ---
+    # 2. Downsamples
     for res in RESOLUTIONS:
         res_dir = publish_root / str(res)
         res_dir.mkdir(exist_ok=True)
-        
-        master_files = [f for f in os.listdir(res_dir_1024) if f.lower().endswith(('.jpg', '.png'))]
-        for f in master_files:
+        for f in files:
             try:
                 img = Image.open(res_dir_1024 / f)
-                img.resize((res, res), Image.Resampling.LANCZOS).save(res_dir / f, quality=95)
+                img.resize((res, res), Image.Resampling.LANCZOS).save(res_dir / f)
                 txt = os.path.splitext(f)[0] + ".txt"
                 if (res_dir_1024 / txt).exists():
                     shutil.copy(res_dir_1024 / txt, res_dir / txt)
-            except Exception as e:
-                print(f"⚠️ Downsample error {f}: {e}")
+            except: pass
 
-    # --- 3. Generate Configs ---
+    # 3. Configs
     TARGET_RES = 256
     res_str = "256"
-    
     wsl_img_path = publish_root / res_str
     win_unc_img_path = utils.get_windows_unc_path(str(wsl_img_path))
     
     toml_win_name = f"{slug}_{res_str}_win.toml"
     bat_win_name = f"train_{slug}_{res_str}.bat"
+    
     win_toml_c_path = f"{utils.MUSUBI_PATHS['win_app']}\\TOML\\{toml_win_name}"
     
-    # Generate Content
-    toml_wsl_content = generate_toml(str(wsl_img_path), TARGET_RES)
-    toml_win_content = generate_toml(win_unc_img_path, TARGET_RES)
-    sh_wsl_content = generate_sh(slug, f"{utils.MUSUBI_PATHS['wsl_app']}/TOML/{slug}_{res_str}_wsl.toml")
-    bat_win_content = generate_bat(slug, win_toml_c_path)
-
-    # Write Local Backups
-    with open(publish_root / f"{slug}_{res_str}_wsl.toml", "w") as f: f.write(toml_wsl_content)
-    with open(publish_root / f"train_{slug}_{res_str}.sh", "w") as f: f.write(sh_wsl_content)
-    with open(publish_root / toml_win_name, "w") as f: f.write(toml_win_content)
-    with open(publish_root / bat_win_name, "w") as f: f.write(bat_win_content)
-
-    # --- 4. Deploy (Best Effort) ---
-    print("🚀 Deploying configs...")
+    # Write Local Copies
+    with open(publish_root / toml_win_name, "w") as f:
+        f.write(generate_toml(win_unc_img_path, TARGET_RES))
+    with open(publish_root / bat_win_name, "w") as f:
+        f.write(generate_bat(slug, win_toml_c_path))
     
-    # WSL Targets
-    wsl_toml_dir = Path(utils.MUSUBI_PATHS['wsl_app']) / "TOML"
-    wsl_bat_dir = Path(utils.MUSUBI_PATHS['wsl_app']) / "BAT"
-    wsl_toml_dir.mkdir(parents=True, exist_ok=True)
-    wsl_bat_dir.mkdir(parents=True, exist_ok=True)
-    
+    # Write to Windows UNC (Best Effort)
     try:
-        shutil.copy(publish_root / f"{slug}_{res_str}_wsl.toml", wsl_toml_dir)
-        shutil.copy(publish_root / f"train_{slug}_{res_str}.sh", wsl_bat_dir)
-        os.chmod(wsl_bat_dir / f"train_{slug}_{res_str}.sh", 0o755)
-    except: pass
-
-    # Windows UNC Targets
-    win_toml_unc = Path(utils.get_windows_unc_path(str(wsl_toml_dir)))
-    win_bat_unc = Path(utils.get_windows_unc_path(str(wsl_bat_dir)))
-    
-    try:
-        shutil.copy(publish_root / toml_win_name, win_toml_unc / toml_win_name)
-        shutil.copy(publish_root / bat_win_name, win_bat_unc / bat_win_name)
+        win_toml_dest = Path(f"{utils.get_windows_unc_path(str(Path(utils.MUSUBI_PATHS['wsl_app']) / 'TOML'))}\\{toml_win_name}".replace("/", "\\"))
+        win_bat_dest = Path(f"{utils.get_windows_unc_path(str(Path(utils.MUSUBI_PATHS['wsl_app']) / 'BAT'))}\\{bat_win_name}".replace("/", "\\"))
+        shutil.copy(publish_root / toml_win_name, win_toml_dest)
+        shutil.copy(publish_root / bat_win_name, win_bat_dest)
     except: pass
 
     with open(publish_root / f"{trigger}.txt", "w") as f:
         f.write(f"Trigger Word = {trigger}")
 
     print(f"✅ Published to {publish_root}")
-
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        run(sys.argv[1])
-    else:
-        print("Usage: python 04_publish.py <slug>")
