@@ -1,5 +1,6 @@
 === PATCH START: update.py ===
-NEW_FILE:
+NEW_FILE_PATH: update.py
+NEW_FILE_CONTENT:
 #!/usr/bin/env python3
 """
 update.py — wrapper for Vibecoder MARCO→POLO cycle
@@ -43,7 +44,7 @@ def main():
     run(["python3", str(vibecoder), "overseer-dump"])
 
     print("=================================================")
-    print("[OK] UPDATE COMPLETE — GitHub + overseer.txt synced")
+    print("[OK] UPDATE COMPLETE — GitHub + overseer synced")
     print("=================================================")
 
 if __name__ == "__main__":
