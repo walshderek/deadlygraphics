@@ -769,4 +769,8 @@ if __name__ == "__main__":
     main()
 
 === FILE END: modules/DG_vibecoder_github_push.py ===
-=== OVERSEER MANIFEST END ===
+=== OVERSEER MANIFEST END ====== PATCH START: .gitignore ===
+INSERT_TEXT:
+# Ensure DG_vibecoder folder is always included
+!ai/apps/DG_vibecoder/
+=== PATCH END ===
