@@ -3,6 +3,76 @@
 
 import os
 import sys
+# ============================================================
+# .vibeignore SUPPORT
+# ============================================================
+
+VIBEIGNORE_PATH = Path(__file__).resolve().parent / ".vibeignore"
+
+def load_vibeignore():
+    if VIBEIGNORE_PATH.exists():
+        patterns = [x.strip() for x in VIBEIGNORE_PATH.read_text().splitlines() if x.strip()]
+        return patterns
+    return []
+
+def should_ignore(path, ignore_patterns):
+    p = str(path)
+    for pat in ignore_patterns:
+        if pat in p:
+            return True
+    return False
+
+# ============================================================
+# STATUS COMMAND
+# ============================================================
+
+def run_status(repo_path):
+    print("=== VIBECODER STATUS ===")
+    print(f"Repo path: {repo_path}")
+    print(f"Overseer file: {LOCAL_OVERSEER_PATH}")
+
+    if not LOCAL_OVERSEER_PATH.exists():
+        print("[WARN] overseer.txt missing!")
+    else:
+        print("[OK] overseer.txt found")
+
+    # Git status
+    print("\n=== GIT STATUS ===")
+    subprocess.run(["git", "status"], cwd=repo_path)
+
+    print("\n=== LOCAL FILES ===")
+    root = Path(__file__).resolve().parent
+    for item in sorted(root.iterdir()):
+        print(" -", item.name)
+
+    print("\n=== IGNORE PATTERNS (.vibeignore) ===")
+    ig = load_vibeignore()
+    if ig:
+        for p in ig:
+            print("   •", p)
+    else:
+        print("   (none)")
+
+# ============================================================
+# DRY-RUN MODE
+# ============================================================
+
+def run_overseer_implement_dryrun():
+    print("=== VIBECODER DRY-RUN ===")
+    odoc = LOCAL_OVERSEER_PATH
+    if not odoc.exists():
+        print("[FATAL] overseer.txt missing.")
+        return
+    text = odoc.read_text()
+    patches = parse_patches(text)
+    if not patches:
+        print("[INFO] No patches found.")
+        return
+    print(f"[INFO] Would apply {len(patches)} patches:")
+    for p in patches:
+        print(f" - {p['file']}")
+    print("[DRY RUN COMPLETE — no files modified]")
+
 import json
 import subprocess
 from pathlib import Path
