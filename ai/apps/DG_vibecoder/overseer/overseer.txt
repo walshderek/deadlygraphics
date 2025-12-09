@@ -1,52 +1,17 @@
-=== PATCH START: update.py ===
-NEW_FILE_PATH: update.py
-NEW_FILE_CONTENT:
-#!/usr/bin/env python3
-"""
-update.py — wrapper for Vibecoder MARCO→POLO cycle
+=== PATCH START: DG_vibecoder.py ===
+INSERT_AFTER: def apply_patch_to_file(root, patch):
+INSERT_TEXT:
 
-Runs:
+    # -------------------------------------------------------
+    # NEW FILE CREATION SUPPORT
+    # -------------------------------------------------------
+    if "NEW_FILE_PATH" in patch:
+        rel_path = patch["NEW_FILE_PATH"].strip()
+        new_file_path = root / rel_path
+        new_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    1) python3 DG_vibecoder.py overseer-implement
-    2) python3 DG_vibecoder.py overseer-dump
+        content = patch.get("NEW_FILE_CONTENT", "")
+        new_file_path.write_text(content, encoding="utf-8")
 
-This ensures GitHub and overseer.txt always stay in sync.
-"""
-
-import subprocess
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent
-
-def run(cmd):
-    print(f"\n[RUN] {' '.join(cmd)}")
-    proc = subprocess.run(cmd)
-    if proc.returncode != 0:
-        print(f"[ERROR] Command failed: {' '.join(cmd)}")
-        sys.exit(proc.returncode)
-
-def main():
-    vibecoder = ROOT / "DG_vibecoder.py"
-
-    if not vibecoder.exists():
-        print("[FATAL] DG_vibecoder.py not found in working directory!")
-        sys.exit(1)
-
-    print("=================================================")
-    print("=== VIBECODER UPDATE — MARCO/POLO WRAPPER =======")
-    print("=================================================")
-
-    # 1 — Apply patches
-    run(["python3", str(vibecoder), "overseer-implement"])
-
-    # 2 — Generate new manifest
-    run(["python3", str(vibecoder), "overseer-dump"])
-
-    print("=================================================")
-    print("[OK] UPDATE COMPLETE — GitHub + overseer synced")
-    print("=================================================")
-
-if __name__ == "__main__":
-    main()
+        return f"[NEW FILE CREATED] {rel_path}"
 === PATCH END ===
