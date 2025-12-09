@@ -4,8 +4,22 @@ import time
 import json
 import requests
 from urllib.parse import quote_plus
-from playwright.sync_api import sync_playwright
+from pathlib import Path
+
+# --- BOOTSTRAP PATHS ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 import utils
+
+# Ensure Playwright is available
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    utils.install_package("playwright")
+    import subprocess
+    subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
+    from playwright.sync_api import sync_playwright
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -61,41 +75,55 @@ def scrape_bing_playwright(query, limit, save_dir, prefix):
                 except: pass
             else:
                 stagnation_counter = 0
-                print(f"    Found {len(urls)} unique URLs...")
+                print(f"    Found {len(urls)} unique URLs...", end='\r')
 
         browser.close()
         
-    print(f"--> Downloading {len(urls)} images...")
-    # Fix: Start numbering at 0001
+    print(f"\n--> Downloading {len(urls)} images...")
+    
+    # Start numbering at 0001
     for i, url in enumerate(urls, 1):
+        if i > limit: break
+        
         ext = os.path.splitext(url)[1].lower()
         if ext not in ALLOWED_EXTENSIONS: ext = ".jpg"
+        # Sanitize extension (remove query params)
+        ext = ext.split('?')[0]
         
         filename = f"{prefix}_{i:04d}{ext}"
         if download_image(url, save_dir / filename):
-            print(f"    Downloaded: {filename}")
-            if i >= limit: break
+            print(f"    Downloaded: {filename} [{i}/{limit}]", end='\r')
             
-    print(f"✅ Downloaded images.")
+    print(f"\n✅ Downloaded images.")
 
-def run(full_name, limit, gender, trigger_arg=None):
-    slug = utils.slugify(full_name)
+def run(slug):
+    # 1. Load Config (Orchestrator saved this)
+    config = utils.load_config(slug)
+    if not config:
+        print(f"❌ Error: Config not found for {slug}")
+        return
+
+    # 2. Extract settings
+    limit = config.get('limit', 100)
+    
+    # Infer search query from slug (e.g. 'ed_milliband' -> 'Ed Milliband portrait')
+    # Since config doesn't store raw name, this is the safest fallback
+    search_query = slug.replace("_", " ").title() + " portrait high quality"
+
+    # 3. Setup Paths
     path = utils.get_project_path(slug)
     scrape_dir = path / utils.DIRS['scrape']
     scrape_dir.mkdir(parents=True, exist_ok=True)
-    
-    if not trigger_arg: trigger = utils.gen_trigger(full_name)
-    else: trigger = trigger_arg
-        
-    config = {'prompt': full_name, 'trigger': trigger, 'count': limit, 'gender': gender}
-    utils.save_config(slug, config)
-    utils.update_trigger_db(slug, trigger, full_name)
-    print(f"🔑 Trigger Word: {trigger}")
 
+    # 4. Check existing
     existing = [f for f in os.listdir(scrape_dir) if f.lower().endswith(tuple(ALLOWED_EXTENSIONS))]
     if len(existing) >= limit:
         print(f"✅ Found {len(existing)} images, skipping scrape.")
-        return slug
+        return
 
-    scrape_bing_playwright(full_name, limit, scrape_dir, slug)
-    return slug
+    # 5. Run Scrape
+    scrape_bing_playwright(search_query, limit, scrape_dir, slug)
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        run(sys.argv[1])

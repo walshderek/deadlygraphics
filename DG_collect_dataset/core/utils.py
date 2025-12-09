@@ -8,23 +8,27 @@ import csv
 from pathlib import Path
 
 # --- CONFIGURATION ---
-ROOT_DIR = Path(__file__).parent.parent
+# Since this file is in /core/, parent is root, parent.parent is outside the project
+# logic: utils.py is in /core/. 
+# Path(__file__).parent is /core/
+# Path(__file__).parent.parent is /DG_collect_dataset/ (ROOT)
+ROOT_DIR = Path(__file__).parent.parent 
 VENV_PATH = ROOT_DIR / ".venv"
 REQUIREMENTS_PATH = ROOT_DIR / "core" / "requirements.txt"
 LINUX_PROJECTS_ROOT = ROOT_DIR / "outputs"
 LINUX_DATASETS_ROOT = ROOT_DIR / "datasets"
 DB_PATH = ROOT_DIR / "Database" / "trigger_words.csv"
 
-# --- UNIFIED DIRECTORY SCHEMA ---
+# --- UNIFIED DIRECTORY SCHEMA (1-6 PIPELINE) ---
 DIRS = {
-    "scrape": "00_scraped",
-    "crop": "01_cropped",
-    "caption": "02_captions",
-    "clean": "03_cleaned",
-    "qc": "04_qc",
-    "publish": "05_publish",
-    "master": "05_publish/1024",
-    "downsample": "05_publish",
+    "scrape": "01_scrape",
+    "crop": "02_crop",
+    "validate": "03_validate",
+    "clean": "04_clean",
+    "caption": "05_caption",
+    "publish": "06_publish",
+    "master": "06_publish/1024",
+    "downsample": "06_publish",
 }
 
 # Musubi Tuner Paths
@@ -41,7 +45,6 @@ MODEL_STORE_ROOT = Path("/mnt/c/AI/models/LLM")
 def install_package(package_name):
     print(f"📦 Installing missing dependency: {package_name}...")
     try:
-        # Split string into list so pip gets individual args
         pkgs = package_name.split()
         subprocess.check_call([sys.executable, "-m", "pip", "install"] + pkgs)
         print(f"✅ Installed {package_name}")
@@ -50,41 +53,28 @@ def install_package(package_name):
 
 def bootstrap(install_reqs=True):
     if not install_reqs: return
-    
     os.environ['OLLAMA_MODELS'] = str(MODEL_STORE_ROOT)
 
     try: import deepface
     except ImportError: install_package("deepface tf-keras opencv-python")
-    
     try: import playwright
     except ImportError: 
         install_package("playwright")
         subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
-
     try: import huggingface_hub
     except ImportError: install_package("huggingface_hub")
-    
     try: import requests
     except ImportError: install_package("requests")
-    
-    # Clean/QC dependencies
     try: import diffusers
     except ImportError: install_package("diffusers transformers accelerate scipy")
     try: import sklearn
     except ImportError: install_package("scikit-learn")
-
-    # Qwen-VL Dependencies (Check individually to ensure updates)
     try: import qwen_vl_utils
     except ImportError: install_package("qwen-vl-utils")
-    
-    # FIX: Explicit check for bitsandbytes to ensure 4-bit loading works
     try: import bitsandbytes
     except ImportError: install_package("bitsandbytes")
-    
     try: import accelerate
     except ImportError: install_package("accelerate")
-
-    # Qwen-VL Download
     from huggingface_hub import snapshot_download
     qwen_dir = MODEL_STORE_ROOT / "QWEN" / "Qwen2.5-VL-3B-Instruct"
     if not qwen_dir.exists():
@@ -110,8 +100,11 @@ def load_config(slug):
     if not path.exists(): return None
     with open(path, 'r') as f: return json.load(f)
 
+# --- THE FIX IS HERE ---
 def save_config(slug, data):
     path = get_project_path(slug) / "project_config.json"
+    # Ensure the directory exists before writing!
+    path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'w') as f: json.dump(data, f, indent=4)
 
 def get_windows_unc_path(wsl_path):
