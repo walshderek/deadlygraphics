@@ -1,5 +1,3 @@
-=== PATCH START: update.py ===
-NEW_FILE:
 #!/usr/bin/env python3
 """
 Unified Vibecoder update script.
@@ -41,4 +39,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-=== PATCH END ===
