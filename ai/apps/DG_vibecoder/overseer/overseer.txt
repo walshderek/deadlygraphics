@@ -1,36 +1,19 @@
-=== PATCH START: update.py ===
+=== PATCH START: modules/core.py ===
 #!/usr/bin/env python3
 """
-Unified Vibecoder update script (v3.0 Wired).
+DG Core Utilities
 """
-
 import subprocess
-import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-
-def run(cmd):
-    print(f"\n[RUN] {' '.join(cmd)}")
-    p = subprocess.run(cmd, text=True)
-    if p.returncode != 0:
-        print(f"[ERROR] Command failed: {cmd}")
-        sys.exit(1)
-
-def main():
-    print("=== Vibecoder Update Script (v3.0 Wired) ===")
-
-    # Use the Smart Engine in modules/
-    vibecoder_engine = "modules/DG_vibecoder_github_push.py"
-
-    # 1) POLO (Implement changes from logs/overseer_response.txt)
-    run(["python3", vibecoder_engine, "overseer-implement"])
-
-    # 2) MARCO (Snapshot to logs/overseer_response.txt)
-    run(["python3", vibecoder_engine, "overseer-dump"])
-
-    print("\n=== UPDATE COMPLETE ===")
-
-if __name__ == "__main__":
-    main()
+# === VIBECORE: COMMAND SUMMARY START ===
+def generate_summary_of_changes():
+    """
+    Reads the git diff and prints a friendly summary for console display.
+    """
+    try:
+        diff = subprocess.check_output(["git", "diff", "--stat"], text=True)
+        return diff.strip()
+    except Exception as e:
+        return f"[ERROR] Unable to produce summary: {e}"
+# === VIBECORE: COMMAND SUMMARY END ===
 === PATCH END ===
