@@ -1,4 +1,393 @@
-=== PATCH START: modules/DG_dependency_scanner.py ===
+=== OVERSEER MANIFEST START ===
+
+=== FILE START: DG_vibecoder/test/ball.txt ===
+
+=== FILE END: DG_vibecoder/test/ball.txt ===
+
+=== FILE START: DG_vibecoder.py ===
+#!/usr/bin/env python3
+import os
+import sys
+import json
+import shutil
+import subprocess
+from pathlib import Path
+from datetime import datetime
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+CREDENTIALS_PATH = "/mnt/c/credentials/credentials.json"
+
+ROOT = Path(__file__).resolve().parent
+OVERSEER_DIR = ROOT / "overseer"
+OVERSEER_FILE = OVERSEER_DIR / "overseer.txt"
+MODULES_DIR = ROOT / "modules"
+
+LOCAL_REPO = Path("/mnt/c/Users/seanf/Documents/GitHub/deadlygraphics")
+
+
+# ============================================================
+# UTILS
+# ============================================================
+
+def load_credentials():
+    if not os.path.exists(CREDENTIALS_PATH):
+        raise FileNotFoundError(f"Missing credentials.json at {CREDENTIALS_PATH}")
+    with open(CREDENTIALS_PATH, "r") as f:
+        return json.load(f)
+
+
+def run(cmd, cwd=None):
+    """Run a subprocess and echo output."""
+    print(f"[DEBUG] RUN: {cmd}")
+    result = subprocess.run(cmd, cwd=cwd, text=True)
+    return result.returncode
+
+
+# ============================================================
+# GIT MIRROR SYNC
+# ============================================================
+
+def sync_to_github(message):
+    print("[SYNC] Syncing local vibecoder → GitHub mirror...")
+
+    # Copy files from WSL to Windows repo
+    for item in ROOT.iterdir():
+        if item.name in ["logs", "__pycache__", ".git"]: 
+            continue
+        dest = LOCAL_REPO / "ai/apps/DG_vibecoder" / item.name
+
+        if item.is_dir():
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(item, dest)
+        else:
+            shutil.copy2(item, dest)
+
+    # Git commands
+    run(["git", "add", "."], cwd=LOCAL_REPO)
+    run(["git", "commit", "-m", message], cwd=LOCAL_REPO)
+    run(["git", "push", "origin", "main"], cwd=LOCAL_REPO)
+
+    print("[SYNC] Git push complete.")
+
+
+# ============================================================
+# OVERSEER IMPLEMENT (POLO)
+# ============================================================
+
+def parse_patch_blocks(text):
+    """
+    Extract patch blocks from overseer.txt.
+    """
+    blocks = []
+    current = None
+
+    for line in text.splitlines():
+        if line.startswith("=== PATCH START:"):
+            filename = line.split(":")[1].strip().split("===")[0].strip()
+            current = {"file": filename, "content": []}
+        elif line.startswith("=== PATCH END"):
+            if current:
+                blocks.append(current)
+                current = None
+        elif current:
+            current["content"].append(line)
+
+    return blocks
+
+
+def implement_patches():
+    """
+    Applies patches from overseer.txt
+    """
+    if not OVERSEER_FILE.exists():
+        print("[ERROR] overseer.txt not found.")
+        return
+
+    txt = OVERSEER_FILE.read_text(encoding="utf-8")
+    patches = parse_patch_blocks(txt)
+
+    print(f"[INFO] Found {len(patches)} patch block(s).")
+
+    for patch in patches:
+        target_path = ROOT / patch["file"]
+
+        print(f"[OK] Overwriting file: {target_path}")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text("\n".join(patch["content"]), encoding="utf-8")
+
+    sync_to_github("Vibecoder auto-sync (implement)")
+
+
+# ============================================================
+# OVERSEER DUMP (MARCO)
+# ============================================================
+
+def generate_manifest():
+    """
+    Write a clean overseer.txt manifest.
+    """
+    OVERSEER_DIR.mkdir(exist_ok=True)
+
+    lines = []
+    lines.append("=== OVERSEER MANIFEST START ===\n")
+
+    for p in sorted(ROOT.rglob("*")):
+        if p.is_dir():
+            continue
+        if "overseer/overseer.txt" in str(p):
+            continue
+        rel = p.relative_to(ROOT)
+        try:
+            text = p.read_text(encoding="utf-8")
+        except:
+            text = "<BINARY FILE>"
+        lines.append(f"=== FILE START: {rel} ===")
+        lines.append(text)
+        lines.append(f"=== FILE END: {rel} ===\n")
+
+    lines.append("=== OVERSEER MANIFEST END ===\n")
+
+    OVERSEER_FILE.write_text("\n".join(lines), encoding="utf-8")
+
+    sync_to_github("Vibecoder auto-sync (dump)")
+
+
+# ============================================================
+# MAIN DISPATCHER
+# ============================================================
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python3 DG_vibecoder.py overseer-implement")
+        print("  python3 DG_vibecoder.py overseer-dump")
+        return
+
+    mode = sys.argv[1]
+
+    if mode == "overseer-implement":
+        implement_patches()
+
+    elif mode == "overseer-dump":
+        generate_manifest()
+
+    else:
+        print(f"[ERROR] Unknown mode: {mode}")
+
+
+if __name__ == "__main__":
+    main()
+
+=== FILE END: DG_vibecoder.py ===
+
+=== FILE START: docs/architecture.md ===
+# Deadly Graphics Architecture
+
+## High-Level Components  
+- **DG_vibecoder** — automation engine  
+- **Overseer system** — patch generator + manifest manager  
+- **GitHub Mirror** — canonical repository state  
+- **Docs Suite** — auto-generated & AI-updated  
+
+---
+
+## MARCO (Dump)
+Produces a complete snapshot of the DG_vibecoder environment:  
+- All files  
+- Metadata  
+- Structure  
+- Instructions for patch insertion  
+
+---
+
+## POLO (Implement)
+Reads overseer patches and updates the actual codebase:  
+- File rewrites  
+- Insert-after ops  
+- Replace ops  
+- New file creation  
+
+POLO is deterministic and safe.  
+
+---
+
+## Principles  
+- No manual editing of core components  
+- Overseer is the single source of truth  
+- Vibecoder must always remain operable  
+- Every update is reversible  
+
+This file will expand automatically as new subsystems are added.
+=== FILE END: docs/architecture.md ===
+
+=== FILE START: docs/deadlygraphics_overview.md ===
+# Deadly Graphics Suite — System Overview  
+*(Brand typeface: **Lobster**)  
+
+## Purpose  
+Deadly Graphics (DG) is an evolving suite of AI-driven development tools  
+designed for automation, self-maintaining codebases, and rich documentation.  
+
+DG provides:  
+- Intelligent developer workflows  
+- Repo-wide automation via MARCO/POLO  
+- Cross-platform WSL/Windows syncing  
+- Tools that document and modify themselves  
+
+DG aims to feel like a *living code ecosystem*.  
+
+---
+
+## DG_vibecoder's Role  
+Vibecoder is the automation heart of DG.  
+It handles:  
+- Patch-based code editing  
+- Full repository snapshots  
+- GitHub mirroring  
+- Safe reversible updates  
+- Self-maintained documentation  
+
+Developers **never edit core tools manually** — the overseer manages everything.
+
+---
+
+## Branding Notes  
+- Typeface: **Lobster**  
+- Visual identity: curves, playful strength, neon undertones  
+- Tone: bold, technical, alive  
+
+---
+
+## Roadmap (High-Level)  
+- Auto-generated architecture graphs  
+- Visual dependency mapping  
+- Workflow state-machine diagrams  
+- Versioning timelines  
+- Multi-app orchestration layer  
+
+This document is the beginning of the official DG documentation tree.
+=== FILE END: docs/deadlygraphics_overview.md ===
+
+=== FILE START: docs/diagrams/architecture.svg ===
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="650">
+  <rect width="1000" height="650" fill="#000"/>
+  <text x="40" y="50" fill="#0ff" font-size="30" font-family="monospace">
+    Deadly Graphics — Architecture Diagram
+  </text>
+
+  <!-- Vibecoder -->
+  <rect x="60" y="120" width="300" height="120"
+        fill="#111" stroke="#0ff" stroke-width="2"/>
+  <text x="80" y="160" fill="#0ff" font-size="18" font-family="monospace">
+    DG_vibecoder
+  </text>
+  <text x="80" y="185" fill="#0ff" font-size="15" font-family="monospace">
+    Automation Engine
+  </text>
+
+  <!-- Overseer -->
+  <rect x="400" y="120" width="300" height="120"
+        fill="#111" stroke="#f0f" stroke-width="2"/>
+  <text x="420" y="160" fill="#f0f" font-size="18" font-family="monospace">
+    Overseer System
+  </text>
+  <text x="420" y="185" fill="#f0f" font-size="15" font-family="monospace">
+    Snapshot & Patch Manager
+  </text>
+
+  <!-- GitHub Mirror -->
+  <rect x="740" y="120" width="220" height="120"
+        fill="#111" stroke="#0f0" stroke-width="2"/>
+  <text x="760" y="160" fill="#0f0" font-size="18" font-family="monospace">
+    GitHub Mirror
+  </text>
+  <text x="760" y="185" fill="#0f0" font-size="15" font-family="monospace">
+    Canonical Repo State
+  </text>
+
+  <!-- Arrows -->
+  <line x1="360" y1="180" x2="400" y2="180"
+        stroke="#fff" stroke-width="2"/>
+  <line x1="700" y1="180" x2="740" y2="180"
+        stroke="#fff" stroke-width="2"/>
+
+  <!-- Description -->
+  <text x="60" y="300" fill="#fff" font-size="18" font-family="monospace">
+    DG behaves like a living, self-maintaining code ecosystem.
+  </text>
+</svg>
+=== FILE END: docs/diagrams/architecture.svg ===
+
+=== FILE START: docs/diagrams/workflow.svg ===
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="500">
+  <rect width="900" height="500" fill="#111"/>
+  <text x="50" y="60" fill="#0f0" font-size="28" font-family="monospace">Deadly Graphics — Workflow Diagram</text>
+
+  <text x="50" y="140" fill="#0ff" font-size="20" font-family="monospace">Developer → MARCO → LLM → POLO → GitHub</text>
+
+  <rect x="40" y="180" width="200" height="80" fill="#222" stroke="#0f0"/>
+  <text x="55" y="225" fill="#0f0" font-size="16" font-family="monospace">Developer Runs:</text>
+  <text x="55" y="245" fill="#0f0" font-size="16" font-family="monospace">overseer-dump</text>
+
+  <rect x="260" y="180" width="200" height="80" fill="#222" stroke="#0ff"/>
+  <text x="275" y="225" fill="#0ff" font-size="16" font-family="monospace">MARCO Snapshot</text>
+
+  <rect x="480" y="180" width="200" height="80" fill="#222" stroke="#f0f"/>
+  <text x="495" y="225" fill="#f0f" font-size="16" font-family="monospace">LLM Writes PATCHES</text>
+
+  <rect x="700" y="180" width="200" height="80" fill="#222" stroke="#ff0"/>
+  <text x="715" y="225" fill="#ff0" font-size="16" font-family="monospace">POLO Applies</text>
+
+  <text x="50" y="330" fill="#fff" font-size="18" font-family="monospace">Result → Updated codebase + auto GitHub sync</text>
+</svg>
+=== FILE END: docs/diagrams/workflow.svg ===
+
+=== FILE START: docs/index.md ===
+# Deadly Graphics Documentation Index
+
+Welcome to the DG documentation tree.  
+This index provides a human-friendly entry point into the system.
+
+---
+
+## Core Documents  
+- **Deadly Graphics Overview**  
+  → `docs/deadlygraphics_overview.md`  
+
+- **Architecture Overview**  
+  → `docs/architecture.md`  
+
+- **Workflow Guide**  
+  → `docs/workflow.md`  
+
+- **Auto-Generated Diagrams**  
+  → `docs/diagrams/workflow.svg`  
+  → `docs/diagrams/architecture.svg`  
+
+---
+
+## Purpose of This Index  
+As DG evolves, this index will grow to include:  
+- API references  
+- Module trees  
+- Dependency graphs  
+- Version histories  
+- Developer onboarding docs  
+
+DG is designed to be self-explanatory and self-maintaining.  
+This file is your anchor point.
+=== FILE END: docs/index.md ===
+
+=== FILE START: hello_from_vibecoder.txt ===
+Hello world! This file was created by DG_vibecoder.
+
+=== FILE END: hello_from_vibecoder.txt ===
+
+=== FILE START: modules/DG_dependency_scanner.py ===
 #!/usr/bin/env python3
 """
 DG_dependency_scanner.py
@@ -182,4 +571,557 @@ def main():
 
 if __name__ == "__main__":
     main()
-=== PATCH END ===
+=== FILE END: modules/DG_dependency_scanner.py ===
+
+=== FILE START: modules/DG_vibecoder.py:Zone.Identifier ===
+[ZoneTransfer]
+ZoneId=3 
+=== FILE END: modules/DG_vibecoder.py:Zone.Identifier ===
+
+=== FILE START: modules/DG_vibecoder_github_push.py ===
+#!/usr/bin/env python3
+import os
+import sys
+import json
+import subprocess
+from pathlib import Path
+from datetime import datetime
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+CREDENTIALS_FILE = "/mnt/c/credentials/credentials.json"
+INCLUDE_EXT = {".py", ".txt", ".md", ".toml", ".bat", ".sh"}
+EXCLUDE_DIRS = {"logs", ".git", "__pycache__"}
+
+
+# ============================================================
+# UTILS: PATH / CREDS
+# ============================================================
+
+def win_to_wsl(path: str) -> str:
+    """
+    Convert Windows path (C:\\Users\\...) to WSL path (/mnt/c/Users/...).
+    """
+    drive, rest = path.split(":", 1)
+    drive = drive.lower()
+    rest = rest.replace("\\", "/")
+    return f"/mnt/{drive}{rest}"
+
+
+def load_credentials() -> dict:
+    if not os.path.exists(CREDENTIALS_FILE):
+        raise FileNotFoundError(f"Credentials file NOT found: {CREDENTIALS_FILE}")
+    with open(CREDENTIALS_FILE, "r") as f:
+        return json.load(f)
+
+
+# ============================================================
+# GITHUB PUSH (DEBUG MODE)
+# ============================================================
+
+def create_test_file(repo_path: str) -> Path:
+    file_path = Path(repo_path) / "hello_from_vibecoder.txt"
+    file_path.write_text(
+        "Hello from DG_vibecoder! This is a debug test.\n",
+        encoding="utf-8"
+    )
+    print(f"[OK] Test file created: {file_path}")
+    return file_path
+
+
+def set_git_remote(repo_path: str, username: str, token: str, repo_name: str):
+    os.chdir(repo_path)
+    remote_url = f"https://{username}:{token}@github.com/{username}/{repo_name}.git"
+    print(f"[DEBUG] Setting git remote to: {remote_url}")
+
+    if not Path(".git").exists():
+        raise RuntimeError(f"ERROR: Not a git repository: {repo_path}")
+
+    result = subprocess.run(
+        ["git", "remote", "set-url", "origin", remote_url],
+        capture_output=True, text=True
+    )
+    print(result.stdout, result.stderr)
+    if result.returncode != 0:
+        raise RuntimeError("Failed to set git remote URL")
+
+    print("[OK] Git remote updated.")
+
+
+def git_push(repo_path: str, message: str):
+    os.chdir(repo_path)
+
+    print("[DEBUG] git add .")
+    result = subprocess.run(["git", "add", "."], capture_output=True, text=True)
+    print(result.stdout, result.stderr)
+
+    print(f"[DEBUG] git commit -m \"{message}\"")
+    result = subprocess.run(
+        ["git", "commit", "-m", message],
+        capture_output=True, text=True
+    )
+    print(result.stdout, result.stderr)
+
+    print("[DEBUG] git push origin main")
+    result = subprocess.run(
+        ["git", "push", "origin", "main"],
+        capture_output=True, text=True
+    )
+    print(result.stdout, result.stderr)
+
+    if result.returncode != 0:
+        raise RuntimeError("Git push FAILED.")
+    print("[OK] Git push successful.")
+
+
+def run_debug_push():
+    print("=================================================")
+    print("=== DG_vibecoder — DEBUG PUSH MODE (v3.0) =======")
+    print("=================================================")
+
+    creds = load_credentials()
+    username = creds["github"]["user"]
+    token = creds["github"]["token"]
+    repo_name = creds["deadlygraphics"]["repo_name"]
+    win_repo_path = creds["deadlygraphics"]["paths"]["local_repo"]
+    repo_path = win_to_wsl(win_repo_path)
+
+    print(f"[DEBUG] Windows repo path: {win_repo_path}")
+    print(f"[DEBUG] WSL repo path: {repo_path}")
+
+    if not os.path.exists(repo_path):
+        print(f"[FATAL] Repo path does NOT exist on WSL: {repo_path}")
+        return
+
+    print("[DEBUG] Repo path exists.")
+    create_test_file(repo_path)
+    set_git_remote(repo_path, username, token, repo_name)
+    git_push(repo_path, "DG_vibecoder v3.0 debug push")
+
+    print("=================================================")
+    print("=== DEBUG PUSH MODE COMPLETE ====================")
+    print("=================================================")
+
+
+# ============================================================
+# OVERSEER: DUMP (MARCO)
+# ============================================================
+
+def read_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"<< ERROR READING FILE {path}: {e} >>"
+
+
+def build_overseer_dump(target_folder: Path) -> str:
+    """
+    Build a snapshot string of all code/text files in target_folder.
+    """
+    lines = []
+    lines.append("=== OVERSEER SNAPSHOT ===")
+    lines.append(f"generated={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"target_folder={target_folder}")
+    lines.append("")
+
+    lines.append("=== FILES ===")
+
+    file_count = 0
+    for root, dirs, files in os.walk(target_folder):
+        # prune excluded dirs
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in INCLUDE_EXT:
+                continue
+
+            abs_path = Path(root) / fname
+            rel_path = abs_path.relative_to(target_folder)
+
+            content = read_file(abs_path)
+            file_count += 1
+
+            lines.append(f"=== FILE START: {rel_path} ===")
+            lines.append("<CONTENT>")
+            lines.append(content)
+            lines.append("</CONTENT>")
+            lines.append("=== FILE END ===")
+            lines.append("")
+
+    lines.append("=== SUMMARY ===")
+    lines.append(f"total_files={file_count}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def run_overseer_dump():
+    """
+    MARCO:
+      - Create per-timestamp snapshot (overseer_adjust.txt + history copy).
+      - Overwrite logs/overseer_response.txt with the latest snapshot
+        plus instructions for the LLM to add PATCH blocks.
+    """
+    print("=================================================")
+    print("=== DG_vibecoder — OVERSEER DUMP MODE (v3.0) ====")
+    print("=================================================")
+
+    root_folder = Path(__file__).resolve().parent
+    print(f"[INFO] Snapshotting folder: {root_folder}")
+
+    # Build snapshot text
+    snapshot_text = build_overseer_dump(root_folder)
+
+    # 1) Per-timestamp logs (history)
+    logs_root = root_folder / "logs"
+    logs_root.mkdir(exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = logs_root / timestamp
+    history_dir = log_dir / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+
+    adjust_path = log_dir / "overseer_adjust.txt"
+    history_adjust_path = history_dir / "overseer_adjust.txt"
+
+    adjust_path.write_text(snapshot_text, encoding="utf-8")
+    history_adjust_path.write_text(snapshot_text, encoding="utf-8")
+
+    print(f"[SUCCESS] Overseer adjust dump created at: {adjust_path}")
+    print(f"[INFO] History copy saved at: {history_adjust_path}")
+
+    # 2) Persistent working document at logs/overseer_response.txt
+    working_doc_path = logs_root / "overseer_response.txt"
+
+    response_template = f"""{snapshot_text}
+=== PATCHES (TO BE FILLED BY LLM) ===
+
+# Instructions:
+# - ChatGPT should ADD patch blocks in this file using the format:
+#
+# === PATCH START: relative/path/to/file.py ===
+# FIND:
+# old text
+# REPLACE:
+# new text
+# === PATCH END ===
+#
+# or:
+#
+# === PATCH START: relative/path/to/file.py ===
+# INSERT_AFTER:
+# line to match
+# INSERT_TEXT:
+# new text here
+# === PATCH END ===
+#
+# No changes are applied until you run:
+#   python3 DG_vibecoder.py overseer-implement
+#
+# You (the human) can paste the entire content of this file to ChatGPT,
+# then paste ChatGPT's updated content back into this same file.
+"""
+
+    working_doc_path.write_text(response_template, encoding="utf-8")
+    print(f"[INFO] Working doc updated: {working_doc_path}")
+
+    print("")
+    print("Next steps:")
+    print("  1) Open logs/overseer_response.txt and paste its content to ChatGPT.")
+    print("  2) ChatGPT will insert PATCH blocks under the PATCHES section.")
+    print("  3) Save the updated file, then run:")
+    print("       python3 DG_vibecoder.py overseer-implement")
+    print("=================================================")
+
+
+# ============================================================
+# OVERSEER: PATCH PARSING & APPLY (POLO)
+# ============================================================
+
+class Patch:
+    def __init__(self, file_rel: str):
+        self.file_rel = file_rel
+        self.mode = None  # "replace" or "insert_after"
+        self.find_text = ""
+        self.replace_text = ""
+        self.insert_after = ""
+        self.insert_text = ""
+
+
+def parse_patches(response_text: str):
+    """
+    Parse all PATCH START/END blocks from a large working document.
+    Returns a list of Patch objects.
+    """
+    patches = []
+    lines = response_text.splitlines()
+
+    current = None
+    state = None  # None, "FIND", "REPLACE", "INSERT_AFTER", "INSERT_TEXT"
+
+    for raw in lines:
+        line = raw.rstrip("\n")
+
+        if line.startswith("=== PATCH START:"):
+            # Extract raw filename
+            file_rel_raw = line[len("=== PATCH START:"):].strip()
+
+            # Remove trailing "===" or any '=' clutter
+            if file_rel_raw.endswith("==="):
+                file_rel_raw = file_rel_raw[:-3].rstrip()
+            while file_rel_raw.endswith("="):
+                file_rel_raw = file_rel_raw[:-1].rstrip()
+
+            file_rel_raw = file_rel_raw.strip()
+
+            current = Patch(file_rel_raw)
+            patches.append(current)
+            state = None
+            continue
+
+        if line.startswith("=== PATCH END"):
+            current = None
+            state = None
+            continue
+
+        if current is None:
+            continue
+
+        if line.strip() == "FIND:":
+            current.mode = "replace"
+            state = "FIND"
+            current.find_text = ""
+            continue
+
+        if line.strip() == "REPLACE:":
+            state = "REPLACE"
+            current.replace_text = ""
+            continue
+
+        if line.strip() == "INSERT_AFTER:":
+            current.mode = "insert_after"
+            state = "INSERT_AFTER"
+            current.insert_after = ""
+            continue
+
+        if line.strip() == "INSERT_TEXT:":
+            state = "INSERT_TEXT"
+            current.insert_text = ""
+            continue
+
+        # Accumulate text for the current state
+        if state == "FIND":
+            current.find_text += (line + "\n")
+        elif state == "REPLACE":
+            current.replace_text += (line + "\n")
+        elif state == "INSERT_AFTER":
+            current.insert_after += (line + "\n")
+        elif state == "INSERT_TEXT":
+            current.insert_text += (line + "\n")
+
+    # Strip trailing newlines
+    for p in patches:
+        if p.find_text:
+            p.find_text = p.find_text.rstrip("\n")
+        if p.replace_text:
+            p.replace_text = p.replace_text.rstrip("\n")
+        if p.insert_after:
+            p.insert_after = p.insert_after.rstrip("\n")
+        if p.insert_text:
+            p.insert_text = p.insert_text.rstrip("\n")
+
+    return patches
+
+
+def apply_patch_to_file(root_folder: Path, patch: Patch) -> str:
+    """
+    Apply a single patch to the appropriate file.
+    Returns a human-readable summary line.
+    """
+    target_path = root_folder / patch.file_rel
+
+    if not target_path.exists():
+        return f"[WARN] File not found: {patch.file_rel}"
+
+    original = target_path.read_text(encoding="utf-8")
+
+    if patch.mode == "replace":
+        if patch.find_text not in original:
+            return f"[WARN] FIND text not found in {patch.file_rel}"
+        new_content = original.replace(patch.find_text, patch.replace_text, 1)
+        target_path.write_text(new_content, encoding="utf-8")
+        return f"[OK] Replace applied to {patch.file_rel}"
+
+    elif patch.mode == "insert_after":
+        idx = original.find(patch.insert_after)
+        if idx == -1:
+            return f"[WARN] INSERT_AFTER text not found in {patch.file_rel}"
+
+        insert_pos = idx + len(patch.insert_after)
+        new_content = original[:insert_pos] + "\n" + patch.insert_text + original[insert_pos:]
+        target_path.write_text(new_content, encoding="utf-8")
+        return f"[OK] Insert-after applied to {patch.file_rel}"
+
+    else:
+        return f"[WARN] Unknown patch mode for {patch.file_rel}"
+
+
+def run_overseer_implement():
+    """
+    POLO:
+      - Read logs/overseer_response.txt
+      - Parse all PATCH blocks
+      - Apply patches to files
+      - Write logs/last_patch_report.txt
+    """
+    print("=================================================")
+    print("=== DG_vibecoder — OVERSEER IMPLEMENT (v3.0) ====")
+    print("=================================================")
+
+    root_folder = Path(__file__).resolve().parent
+    logs_root = root_folder / "logs"
+    working_doc_path = logs_root / "overseer_response.txt"
+
+    if not working_doc_path.exists():
+        print(f"[FATAL] Working doc not found: {working_doc_path}")
+        return
+
+    response_text = working_doc_path.read_text(encoding="utf-8")
+    patches = parse_patches(response_text)
+
+    if not patches:
+        print("[WARN] No patches found in overseer_response.txt. Nothing to do.")
+        return
+
+    print(f"[INFO] Parsed {len(patches)} patch block(s). Applying...")
+
+    report_lines = []
+    report_lines.append(f"PATCH REPORT - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    report_lines.append(f"Working doc: {working_doc_path}")
+    report_lines.append("")
+
+    for p in patches:
+        summary = apply_patch_to_file(root_folder, p)
+        print(summary)
+        report_lines.append(summary)
+
+    report_text = "\n".join(report_lines)
+    last_report_path = logs_root / "last_patch_report.txt"
+    last_report_path.write_text(report_text, encoding="utf-8")
+
+    print("")
+    print(f"[INFO] Patch report written to: {last_report_path}")
+    print("NOTE: Current implementation does NOT remove patch blocks from")
+    print("      overseer_response.txt. You can manually clear or archive them")
+    print("      once you're happy with the applied changes.")
+    print("=================================================")
+
+
+# ============================================================
+# MAIN DISPATCHER
+# ============================================================
+
+def print_usage():
+    print("DG_vibecoder v3.0 — modes:")
+    print("")
+    print("  python3 DG_vibecoder.py debug-push")
+    print("      Run the original hello-file + git push test.")
+    print("")
+    print("  python3 DG_vibecoder.py overseer-dump")
+    print("      MARCO: Overwrite logs/overseer_response.txt with a full snapshot")
+    print("      of the DG_vibecoder folder plus instructions for the LLM.")
+    print("")
+    print("  python3 DG_vibecoder.py overseer-implement")
+    print("      POLO: Read logs/overseer_response.txt, apply all PATCH blocks")
+    print("      to the codebase, and write logs/last_patch_report.txt.")
+    print("")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print_usage()
+        return
+
+    mode = sys.argv[1].lower()
+
+    if mode == "debug-push":
+        run_debug_push()
+    elif mode == "overseer-dump":
+        run_overseer_dump()
+    elif mode == "overseer-implement":
+        run_overseer_implement()
+    else:
+        print(f"[ERROR] Unknown mode: {mode}")
+        print_usage()
+
+
+if __name__ == "__main__":
+    main()
+
+=== FILE END: modules/DG_vibecoder_github_push.py ===
+
+=== FILE START: modules/core.py ===
+INSERT_AFTER:
+# === VIBECORE: START ===
+INSERT_TEXT:
+# === VIBECORE: COMMAND SUMMARY START ===
+def generate_summary_of_changes():
+    """
+    Reads the git diff and prints a friendly summary for console display.
+    """
+    import subprocess
+    try:
+        diff = subprocess.check_output(["git", "diff", "--stat"], text=True)
+        return diff.strip()
+    except Exception as e:
+        return f"[ERROR] Unable to produce summary: {e}"
+# === VIBECORE: COMMAND SUMMARY END ===
+=== FILE END: modules/core.py ===
+
+=== FILE START: update.py ===
+#!/usr/bin/env python3
+"""
+Unified Vibecoder update script.
+
+This script performs the standard development cycle:
+
+    1) POLO  – Apply patches from overseer.txt
+    2) MARCO – Dump a new overseer manifest + auto-sync to GitHub
+
+Usage:
+
+    python3 update.py
+
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+
+def run(cmd):
+    print(f"\n[RUN] {' '.join(cmd)}")
+    p = subprocess.run(cmd, text=True)
+    if p.returncode != 0:
+        print(f"[ERROR] Command failed: {cmd}")
+        sys.exit(1)
+
+def main():
+    print("=== Vibecoder Update Script ===")
+
+    # 1) POLO
+    run(["python3", "DG_vibecoder.py", "overseer-implement"])
+
+    # 2) MARCO
+    run(["python3", "DG_vibecoder.py", "overseer-dump"])
+
+    print("\n=== UPDATE COMPLETE ===")
+
+if __name__ == "__main__":
+    main()
+=== FILE END: update.py ===
+
+=== OVERSEER MANIFEST END ===
