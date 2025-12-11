@@ -1,4 +1,3 @@
-=== PATCH START: modules/DG_app_manager.py ===
 #!/usr/bin/env python3
 """
 DG_app_manager.py
@@ -142,4 +141,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-=== PATCH END ===
