@@ -1,4 +1,3 @@
-=== PATCH START: docs/index.md ===
 # Deadly Graphics Documentation Index
 
 Welcome to the DG documentation tree.  
@@ -32,4 +31,3 @@ As DG evolves, this index will grow to include:
 
 DG is designed to be self-explanatory and self-maintaining.  
 This file is your anchor point.
-=== PATCH END ===
