@@ -1,15 +1,21 @@
-REPLACE:
-def main():
-    print("=== Vibecoder Update Script ===")
+#!/usr/bin/env python3
+"""
+Unified Vibecoder update script (v3.0 Wired).
+"""
 
-    # 1) POLO
-    run(["python3", "DG_vibecoder.py", "overseer-implement"])
+import subprocess
+import sys
+from pathlib import Path
 
-    # 2) MARCO
-    run(["python3", "DG_vibecoder.py", "overseer-dump"])
+ROOT = Path(__file__).resolve().parent
 
-    print("\n=== UPDATE COMPLETE ===")
-WITH:
+def run(cmd):
+    print(f"\n[RUN] {' '.join(cmd)}")
+    p = subprocess.run(cmd, text=True)
+    if p.returncode != 0:
+        print(f"[ERROR] Command failed: {cmd}")
+        sys.exit(1)
+
 def main():
     print("=== Vibecoder Update Script (v3.0 Wired) ===")
 
@@ -23,3 +29,6 @@ def main():
     run(["python3", vibecoder_engine, "overseer-dump"])
 
     print("\n=== UPDATE COMPLETE ===")
+
+if __name__ == "__main__":
+    main()
