@@ -1,4 +1,3 @@
-=== PATCH START: docs/deadlygraphics_overview.md ===
 # Deadly Graphics Suite — System Overview  
 *(Brand typeface: **Lobster**)  
 
@@ -44,4 +43,3 @@ Developers **never edit core tools manually** — the overseer manages everythin
 - Multi-app orchestration layer  
 
 This document is the beginning of the official DG documentation tree.
-=== PATCH END ===
