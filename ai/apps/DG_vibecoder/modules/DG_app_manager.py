@@ -6,7 +6,7 @@ Part of the Deadly Graphics Suite.
 Purpose:
   Orchestrates the deployment of external AI applications (ComfyUI, OneTrainer, etc.).
   Implements the "Onion Model":
-  - Layer 1: Git clone
+  - Layer 1: Git clone / Pull
   - Layer 2: UV-accelerated Virtual Environment
   - Layer 3: Dependency Installation
   - Layer 4: Integration (Scanner + Manifest)
@@ -19,18 +19,30 @@ import shutil
 import json
 from pathlib import Path
 
-# Import our scanner (assuming it sits in the same modules/ folder)
+# Import our scanner
 try:
     from . import DG_dependency_scanner
 except ImportError:
-    # Fallback if run directly
     import DG_dependency_scanner
 
 # ============================================================
-# CONFIG
+# CONFIGURATION: SUITES & PRESETS
 # ============================================================
 
 UV_INSTALL_SCRIPT = "curl -LsSf https://astral.sh/uv/install.sh | sh"
+
+DG_SUITES = {
+    "DG_AI": {
+        "ComfyUI": "https://github.com/comfyanonymous/ComfyUI",
+        "OneTrainer": "https://github.com/Nerogar/OneTrainer",
+        "Kohya_ss": "https://github.com/bmaltais/kohya_ss",
+        "AI-Toolkit": "https://github.com/ostris/ai-toolkit"
+    }
+}
+
+# ============================================================
+# APP MANAGER LOGIC
+# ============================================================
 
 class AppManager:
     def __init__(self, apps_root: Path):
@@ -44,25 +56,30 @@ class AppManager:
     def ensure_uv(self):
         """Installs uv if missing."""
         if self.uv_bin:
-            print(f"[OK] uv detected: {self.uv_bin}")
+            # print(f"[OK] uv detected: {self.uv_bin}")
             return
         
         print("[INSTALL] Installing uv (The Accelerator)...")
         try:
             subprocess.run(UV_INSTALL_SCRIPT, shell=True, check=True)
             print("[SUCCESS] uv installed.")
-            self.uv_bin = shutil.which("uv") # Refresh
+            self.uv_bin = shutil.which("uv") 
         except subprocess.CalledProcessError as e:
             print(f"[ERROR] Failed to install uv: {e}")
             raise
 
     def clone_repo(self, repo_url: str, app_name: str):
-        """Clones a repository into apps_root/app_name."""
+        """Clones a repository into apps_root/app_name, or pulls if exists."""
         target_dir = self.apps_root / app_name
         
         if target_dir.exists():
             print(f"[INFO] App directory exists: {target_dir}")
-            # Optional: git pull logic could go here
+            print(f"[UPDATE] Attempting git pull...")
+            # Non-blocking pull (check=False) as per architecture
+            try:
+                subprocess.run(["git", "pull"], cwd=target_dir, check=False)
+            except Exception as e:
+                print(f"[WARN] Git pull failed, continuing deployment: {e}")
             return target_dir
             
         print(f"[CLONE] Cloning {app_name} from {repo_url}...")
@@ -73,11 +90,9 @@ class AppManager:
         """Creates a venv using uv."""
         venv_dir = app_dir / ".venv"
         if venv_dir.exists():
-            print(f"[INFO] Venv exists: {venv_dir}")
             return venv_dir
 
         print(f"[VENV] Creating venv for {app_dir.name} using uv...")
-        # uv venv .venv
         subprocess.run(["uv", "venv", ".venv"], cwd=app_dir, check=True)
         return venv_dir
 
@@ -89,9 +104,7 @@ class AppManager:
             return
 
         print(f"[INSTALL] Installing dependencies for {app_dir.name}...")
-        # uv pip install -r requirements.txt
-        # Note: We must activate the venv or point uv to it. 
-        # uv automatically detects .venv in cwd.
+        # uv auto-detects .venv in cwd
         subprocess.run(["uv", "pip", "install", "-r", "requirements.txt"], cwd=app_dir, check=True)
 
     def scan_app(self, app_dir: Path):
@@ -99,14 +112,13 @@ class AppManager:
         print(f"[SCAN] Generating manifest for {app_dir.name}...")
         data = DG_dependency_scanner.scan_directory(app_dir)
         
-        # Save manifest
         manifest_path = app_dir / "manifest.json"
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        print(f"[SUCCESS] Manifest saved to {manifest_path}")
+        print(f"[SUCCESS] Manifest saved.")
 
     def deploy_app(self, app_name: str, repo_url: str):
-        """Full deployment pipeline."""
+        """Full deployment pipeline for a single app."""
         print(f"\n=== DEPLOYING: {app_name} ===")
         self.ensure_uv()
         
@@ -117,27 +129,55 @@ class AppManager:
         
         print(f"=== DEPLOYMENT COMPLETE: {app_name} ===\n")
 
+    def install_suite(self, suite_name: str):
+        """Orchestrates installation of a named suite."""
+        if suite_name not in DG_SUITES:
+            print(f"[ERROR] Suite '{suite_name}' not defined in DG_app_manager.")
+            print(f"Available suites: {list(DG_SUITES.keys())}")
+            return
+
+        print(f"*******************************************")
+        print(f"*** STARTING SUITE INSTALL: {suite_name}")
+        print(f"*******************************************")
+        
+        apps = DG_SUITES[suite_name]
+        for name, url in apps.items():
+            try:
+                self.deploy_app(name, url)
+            except Exception as e:
+                print(f"[CRITICAL] Failed to deploy {name}: {e}")
+                print("Continuing to next app in suite...")
+        
+        print(f"*******************************************")
+        print(f"*** SUITE INSTALL COMPLETE: {suite_name}")
+        print(f"*******************************************")
+
 # ============================================================
 # CLI ENTRYPOINT
 # ============================================================
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python3 DG_app_manager.py <app_name> <repo_url>")
-        print("Example: python3 DG_app_manager.py OneTrainer https://github.com/Nerogar/OneTrainer.git")
+        print("Usage:")
+        print("  python3 DG_app_manager.py <app_name> <repo_url>")
+        print("  python3 DG_app_manager.py --suite <suite_name>")
         return
 
-    app_name = sys.argv[1]
-    repo_url = sys.argv[2]
-    
-    # Apps root is one level up from this modules folder, then into 'apps' (or parallel)
-    # Adjust as per Architecture. Assuming DG_vibecoder/apps_managed/
+    # Determine location for managed apps (DG_vibecoder/apps_managed)
     root = Path(__file__).resolve().parent.parent
     apps_managed = root / "apps_managed"
     apps_managed.mkdir(exist_ok=True)
     
     manager = AppManager(apps_managed)
-    manager.deploy_app(app_name, repo_url)
+
+    arg1 = sys.argv[1]
+    arg2 = sys.argv[2]
+
+    if arg1 == "--suite":
+        manager.install_suite(arg2)
+    else:
+        # Standard mode: app_name, repo_url
+        manager.deploy_app(arg1, arg2)
 
 if __name__ == "__main__":
     main()
