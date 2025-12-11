@@ -1,76 +1,42 @@
-=== PATCH START: DG_vibecoder.py ===
-INSERT_AFTER:
-# === VIBE: IMPORTS END ===
-INSERT_TEXT:
-# === VIBE: SUBCOMMAND REGISTRATION START ===
-# Core command registry (anchor for new commands)
-COMMAND_REGISTRY = {}
-def register_command(name, handler, help_text=""):
-    COMMAND_REGISTRY[name] = {"handler": handler, "help": help_text}
-# === VIBE: SUBCOMMAND REGISTRATION END ===
-=== PATCH END ===
+=== OVERSEER MANIFEST START ===
 
-=== PATCH START: DG_vibecoder.py ===
-INSERT_AFTER:
-# === VIBE: MAIN DISPATCHER START ===
-INSERT_TEXT:
-    # === VIBE: COMMAND DISPATCH START ===
-    # Handle dynamically registered commands
-    if mode in COMMAND_REGISTRY:
-        handler = COMMAND_REGISTRY[mode]["handler"]
-        handler()
-        return
-    # === VIBE: COMMAND DISPATCH END ===
-=== PATCH END ===
+# ---------------------------------------------------------------------
+# THIS IS A CLEAN BASELINE OVERSEER FILE.
+# NO PATCHES. NO BROKEN HEADERS. NO INVALID SYNTAX.
+#
+# YOU WILL PASTE PATCH BLOCKS *BELOW THIS MANIFEST* IN FUTURE UPDATES.
+# ---------------------------------------------------------------------
 
-=== PATCH START: DG_vibecoder.py ===
-INSERT_AFTER:
-# === VIBE: CORE START ===
-INSERT_TEXT:
-# === VIBE: LOADER START ===
-# Dynamically load subcommands from modules/commands/*
-from pathlib import Path
-import importlib
 
-COMMANDS_DIR = Path(__file__).resolve().parent / "modules" / "commands"
-if COMMANDS_DIR.exists():
-    for py in COMMANDS_DIR.glob("*.py"):
-        if py.name.startswith("_"):
-            continue
-        mod_name = f"modules.commands.{py.stem}"
-        mod = importlib.import_module(mod_name)
-        if hasattr(mod, "register"):
-            mod.register(register_command)
-# === VIBE: LOADER END ===
-=== PATCH END ===
+=== FILE START: DG_vibecoder.py ===
+<CONTENTS OMITTED IN MANIFEST MODE>
+=== FILE END: DG_vibecoder.py ===
 
-=== PATCH START: modules/core.py ===
-INSERT_AFTER:
-# === VIBECORE: START ===
-INSERT_TEXT:
-# === VIBECORE: COMMAND SUMMARY START ===
-def generate_summary_of_changes():
-    """
-    Reads the git diff and prints a friendly summary for console display.
-    """
-    import subprocess
-    try:
-        diff = subprocess.check_output(["git", "diff", "--stat"], text=True)
-        return diff.strip()
-    except Exception as e:
-        return f"[ERROR] Unable to produce summary: {e}"
-# === VIBECORE: COMMAND SUMMARY END ===
-=== PATCH END ===
 
-=== PATCH START: DG_vibecoder.py ===
-INSERT_AFTER:
-# === VIBE: DUMP COMPLETE HOOKS START ===
-INSERT_TEXT:
-    # === VIBE: SHOW SUMMARY START ===
-    from modules.core import generate_summary_of_changes
-    summary = generate_summary_of_changes()
-    print("\\n=== SUMMARY OF IMPLEMENTED CHANGES ===")
-    print(summary)
-    print("=== END SUMMARY ===\\n")
-    # === VIBE: SHOW SUMMARY END ===
-=== PATCH END ===
+=== FILE START: update.py ===
+<CONTENTS OMITTED IN MANIFEST MODE>
+=== FILE END: update.py ===
+
+
+=== FILE START: modules/core.py ===
+<CONTENTS OMITTED IN MANIFEST MODE>
+=== FILE END: modules/core.py ===
+
+
+=== FILE START: hello_from_vibecoder.txt ===
+<CONTENTS OMITTED IN MANIFEST MODE>
+=== FILE END: hello_from_vibecoder.txt ===
+
+
+=== FILE START: roadmap ===
+<CONTENTS OMITTED IN MANIFEST MODE>
+=== FILE END: roadmap ===
+
+
+# ---------------------------------------------------------------------
+# ADD ALL NEW PATCHES BELOW THIS LINE
+# ---------------------------------------------------------------------
+
+# (currently no patches)
+
+=== OVERSEER MANIFEST END ===
