@@ -1,4 +1,3 @@
-=== PATCH START: docs/architecture.md ===
 # Deadly Graphics Architecture
 
 ## High-Level Components  
@@ -36,4 +35,3 @@ POLO is deterministic and safe.
 - Every update is reversible  
 
 This file will expand automatically as new subsystems are added.
-=== PATCH END ===
