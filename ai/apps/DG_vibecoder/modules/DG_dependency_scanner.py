@@ -1,4 +1,3 @@
-=== PATCH START: modules/DG_dependency_scanner.py ===
 #!/usr/bin/env python3
 """
 DG_dependency_scanner.py
@@ -182,4 +181,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-=== PATCH END ===
