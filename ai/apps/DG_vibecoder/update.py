@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-Unified Vibecoder update script (v3.0 Wired).
+Unified Vibecoder update script.
+
+This script performs the standard development cycle:
+
+    1) POLO  – Apply patches from overseer.txt
+    2) MARCO – Dump a new overseer manifest + auto-sync to GitHub
+
+Usage:
+
+    python3 update.py
+
 """
 
 import subprocess
@@ -17,16 +27,13 @@ def run(cmd):
         sys.exit(1)
 
 def main():
-    print("=== Vibecoder Update Script (v3.0 Wired) ===")
+    print("=== Vibecoder Update Script ===")
 
-    # Use the Smart Engine in modules/
-    vibecoder_engine = "modules/DG_vibecoder_github_push.py"
+    # 1) POLO
+    run(["python3", "DG_vibecoder.py", "overseer-implement"])
 
-    # 1) POLO (Implement changes from logs/overseer_response.txt)
-    run(["python3", vibecoder_engine, "overseer-implement"])
-
-    # 2) MARCO (Snapshot to logs/overseer_response.txt)
-    run(["python3", vibecoder_engine, "overseer-dump"])
+    # 2) MARCO
+    run(["python3", "DG_vibecoder.py", "overseer-dump"])
 
     print("\n=== UPDATE COMPLETE ===")
 
