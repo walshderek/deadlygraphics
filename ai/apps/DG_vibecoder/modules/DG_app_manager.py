@@ -2,14 +2,6 @@
 """
 DG_app_manager.py
 Part of the Deadly Graphics Suite.
-
-Purpose:
-  Orchestrates the deployment of external AI applications (ComfyUI, OneTrainer, etc.).
-  Implements the "Onion Model":
-  - Layer 1: Git clone / Pull
-  - Layer 2: UV-accelerated Virtual Environment
-  - Layer 3: Dependency Installation
-  - Layer 4: Integration (Scanner + Manifest)
 """
 
 import os
@@ -56,7 +48,6 @@ class AppManager:
     def ensure_uv(self):
         """Installs uv if missing."""
         if self.uv_bin:
-            # print(f"[OK] uv detected: {self.uv_bin}")
             return
         
         print("[INSTALL] Installing uv (The Accelerator)...")
@@ -75,7 +66,6 @@ class AppManager:
         if target_dir.exists():
             print(f"[INFO] App directory exists: {target_dir}")
             print(f"[UPDATE] Attempting git pull...")
-            # Non-blocking pull (check=False) as per architecture
             try:
                 subprocess.run(["git", "pull"], cwd=target_dir, check=False)
             except Exception as e:
