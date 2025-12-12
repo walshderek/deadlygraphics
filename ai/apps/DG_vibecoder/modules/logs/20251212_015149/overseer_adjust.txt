@@ -1,5 +1,5 @@
 === OVERSEER SNAPSHOT ===
-generated=2025-12-12 02:00:14
+generated=2025-12-12 01:51:49
 target_folder=/home/seanf/workspace/deadlygraphics/ai/apps/DG_vibecoder/modules
 
 === FILES ===
@@ -29,7 +29,7 @@ DG_SUITES = {
 
 class AppManager:
     def __init__(self, root):
-        self.apps_root = root
+        self.root = root
         self.uv = shutil.which("uv")
 
     def ensure_uv(self):
@@ -38,54 +38,31 @@ class AppManager:
         subprocess.run("curl -LsSf https://astral.sh/uv/install.sh | sh", shell=True, check=True)
         self.uv = shutil.which("uv")
 
-    def clone_repo(self, repo_url, app_name):
-        target = self.apps_root / app_name
-        if target.exists():
-            print(f"[UPDATE] git pull for {app_name}...")
-            subprocess.run(["git", "pull"], cwd=target, check=False)
-        else:
-            print(f"[CLONE] {app_name}...")
-            subprocess.run(["git", "clone", repo_url, str(target)], check=True)
-        
-        # FIX: Kohya requires submodules
-        if app_name == "Kohya_ss":
-            print("[SUBMODULE] Init for Kohya...")
-            subprocess.run(["git", "submodule", "update", "--init", "--recursive"], cwd=target, check=False)
-        return target
-
-    def install_deps(self, target):
-        print(f"[INSTALL] Dependencies for {target.name}...")
-        
-        # Strategy 1: Fast (UV)
-        try:
-            subprocess.run(["uv", "pip", "install", "-r", "requirements.txt"], cwd=target, check=True)
-        except subprocess.CalledProcessError:
-            print(f"[WARN] 'uv pip' failed. Attempting standard pip fallback...")
-            # Strategy 2: Compat (Standard Pip via UV venv)
-            subprocess.run(["uv", "pip", "install", "pip"], cwd=target, check=True)
-            subprocess.run(["uv", "run", "pip", "install", "-r", "requirements.txt"], cwd=target, check=True)
-
-    def scan_app(self, target):
-        print("[SCAN] Generating manifest...")
-        try:
-            data = DG_dependency_scanner.scan_directory(target)
-            with open(target / "manifest.json", "w") as f: json.dump(data, f, indent=2)
-            print("[SUCCESS] Manifest saved.")
-        except Exception as e:
-            print(f"[WARN] Scanner skipped: {e}")
-
     def deploy(self, name, url):
         print(f"\n=== DEPLOYING: {name} ===")
         self.ensure_uv()
-        target = self.clone_repo(url, name)
+        target = self.root / name
         
-        print(f"[VENV] Creating venv for {name}...")
+        # Clone or Pull
+        if target.exists():
+            print(f"[UPDATE] git pull...")
+            subprocess.run(["git", "pull"], cwd=target, check=False)
+        else:
+            print(f"[CLONE] {url}")
+            subprocess.run(["git", "clone", url, str(target)], check=True)
+
+        # Venv & Deps
+        print("[VENV] Creating venv...")
         subprocess.run(["uv", "venv", ".venv"], cwd=target, check=True)
         
         if (target / "requirements.txt").exists():
-            self.install_deps(target)
+            print("[INSTALL] Deps...")
+            subprocess.run(["uv", "pip", "install", "-r", "requirements.txt"], cwd=target, check=True)
         
-        self.scan_app(target)
+        # Scan
+        print("[SCAN] Generating manifest...")
+        data = DG_dependency_scanner.scan_directory(target)
+        with open(target / "manifest.json", "w") as f: json.dump(data, f, indent=2)
         print(f"[SUCCESS] {name} deployed.")
 
     def install_suite(self, suite):
@@ -97,7 +74,6 @@ class AppManager:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3: sys.exit(1)
-    # Fix path logic to ensure apps_managed is in correct spot
     root = Path(__file__).resolve().parent.parent / "apps_managed"
     root.mkdir(exist_ok=True)
     mgr = AppManager(root)
@@ -806,30 +782,3 @@ if __name__ == "__main__":
 
 === SUMMARY ===
 total_files=4
-
-=== PATCHES (TO BE FILLED BY LLM) ===
-
-# Instructions:
-# - ChatGPT should ADD patch blocks in this file using the format:
-#
-# === PATCH START: relative/path/to/file.py ===
-# FIND:
-# old text
-# REPLACE:
-# new text
-# === PATCH END ===
-#
-# or:
-#
-# === PATCH START: relative/path/to/file.py ===
-# INSERT_AFTER:
-# line to match
-# INSERT_TEXT:
-# new text here
-# === PATCH END ===
-#
-# No changes are applied until you run:
-#   python3 DG_vibecoder.py overseer-implement
-#
-# You (the human) can paste the entire content of this file to ChatGPT,
-# then paste ChatGPT's updated content back into this same file.

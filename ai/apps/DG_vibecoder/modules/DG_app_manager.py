@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-DG_app_manager.py
-Part of the Deadly Graphics Suite.
-"""
-
 import os
 import sys
 import subprocess
@@ -11,18 +6,11 @@ import shutil
 import json
 from pathlib import Path
 
-# Import our scanner
-try:
-    from . import DG_dependency_scanner
-except ImportError:
-    import DG_dependency_scanner
+# Try import scanner
+try: from . import DG_dependency_scanner
+except ImportError: import DG_dependency_scanner
 
-# ============================================================
-# CONFIGURATION: SUITES & PRESETS
-# ============================================================
-
-UV_INSTALL_SCRIPT = "curl -LsSf https://astral.sh/uv/install.sh | sh"
-
+# SUITES
 DG_SUITES = {
     "DG_AI": {
         "ComfyUI": "https://github.com/comfyanonymous/ComfyUI",
@@ -32,142 +20,80 @@ DG_SUITES = {
     }
 }
 
-# ============================================================
-# APP MANAGER LOGIC
-# ============================================================
-
 class AppManager:
-    def __init__(self, apps_root: Path):
-        self.apps_root = apps_root
-        self.uv_bin = self._find_uv()
-
-    def _find_uv(self):
-        """Locates 'uv' executable or returns None."""
-        return shutil.which("uv")
+    def __init__(self, root):
+        self.apps_root = root
+        self.uv = shutil.which("uv")
 
     def ensure_uv(self):
-        """Installs uv if missing."""
-        if self.uv_bin:
-            return
+        if self.uv: return
+        print("[INSTALL] Installing uv...")
+        subprocess.run("curl -LsSf https://astral.sh/uv/install.sh | sh", shell=True, check=True)
+        self.uv = shutil.which("uv")
+
+    def clone_repo(self, repo_url, app_name):
+        target = self.apps_root / app_name
+        if target.exists():
+            print(f"[UPDATE] git pull for {app_name}...")
+            subprocess.run(["git", "pull"], cwd=target, check=False)
+        else:
+            print(f"[CLONE] {app_name}...")
+            subprocess.run(["git", "clone", repo_url, str(target)], check=True)
         
-        print("[INSTALL] Installing uv (The Accelerator)...")
+        # FIX: Kohya requires submodules
+        if app_name == "Kohya_ss":
+            print("[SUBMODULE] Init for Kohya...")
+            subprocess.run(["git", "submodule", "update", "--init", "--recursive"], cwd=target, check=False)
+        return target
+
+    def install_deps(self, target):
+        print(f"[INSTALL] Dependencies for {target.name}...")
+        
+        # Strategy 1: Fast (UV)
         try:
-            subprocess.run(UV_INSTALL_SCRIPT, shell=True, check=True)
-            print("[SUCCESS] uv installed.")
-            self.uv_bin = shutil.which("uv") 
-        except subprocess.CalledProcessError as e:
-            print(f"[ERROR] Failed to install uv: {e}")
-            raise
+            subprocess.run(["uv", "pip", "install", "-r", "requirements.txt"], cwd=target, check=True)
+        except subprocess.CalledProcessError:
+            print(f"[WARN] 'uv pip' failed. Attempting standard pip fallback...")
+            # Strategy 2: Compat (Standard Pip via UV venv)
+            subprocess.run(["uv", "pip", "install", "pip"], cwd=target, check=True)
+            subprocess.run(["uv", "run", "pip", "install", "-r", "requirements.txt"], cwd=target, check=True)
 
-    def clone_repo(self, repo_url: str, app_name: str):
-        """Clones a repository into apps_root/app_name, or pulls if exists."""
-        target_dir = self.apps_root / app_name
-        
-        if target_dir.exists():
-            print(f"[INFO] App directory exists: {target_dir}")
-            print(f"[UPDATE] Attempting git pull...")
-            try:
-                subprocess.run(["git", "pull"], cwd=target_dir, check=False)
-            except Exception as e:
-                print(f"[WARN] Git pull failed, continuing deployment: {e}")
-            return target_dir
-            
-        print(f"[CLONE] Cloning {app_name} from {repo_url}...")
-        subprocess.run(["git", "clone", repo_url, str(target_dir)], check=True)
-        return target_dir
+    def scan_app(self, target):
+        print("[SCAN] Generating manifest...")
+        try:
+            data = DG_dependency_scanner.scan_directory(target)
+            with open(target / "manifest.json", "w") as f: json.dump(data, f, indent=2)
+            print("[SUCCESS] Manifest saved.")
+        except Exception as e:
+            print(f"[WARN] Scanner skipped: {e}")
 
-    def create_venv(self, app_dir: Path):
-        """Creates a venv using uv."""
-        venv_dir = app_dir / ".venv"
-        if venv_dir.exists():
-            return venv_dir
-
-        print(f"[VENV] Creating venv for {app_dir.name} using uv...")
-        subprocess.run(["uv", "venv", ".venv"], cwd=app_dir, check=True)
-        return venv_dir
-
-    def install_deps(self, app_dir: Path):
-        """Installs dependencies from requirements.txt using uv pip."""
-        req_file = app_dir / "requirements.txt"
-        if not req_file.exists():
-            print(f"[WARN] No requirements.txt found in {app_dir.name}")
-            return
-
-        print(f"[INSTALL] Installing dependencies for {app_dir.name}...")
-        # uv auto-detects .venv in cwd
-        subprocess.run(["uv", "pip", "install", "-r", "requirements.txt"], cwd=app_dir, check=True)
-
-    def scan_app(self, app_dir: Path):
-        """Runs the DG_dependency_scanner on the new app."""
-        print(f"[SCAN] Generating manifest for {app_dir.name}...")
-        data = DG_dependency_scanner.scan_directory(app_dir)
-        
-        manifest_path = app_dir / "manifest.json"
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        print(f"[SUCCESS] Manifest saved.")
-
-    def deploy_app(self, app_name: str, repo_url: str):
-        """Full deployment pipeline for a single app."""
-        print(f"\n=== DEPLOYING: {app_name} ===")
+    def deploy(self, name, url):
+        print(f"\n=== DEPLOYING: {name} ===")
         self.ensure_uv()
+        target = self.clone_repo(url, name)
         
-        app_dir = self.clone_repo(repo_url, app_name)
-        self.create_venv(app_dir)
-        self.install_deps(app_dir)
-        self.scan_app(app_dir)
+        print(f"[VENV] Creating venv for {name}...")
+        subprocess.run(["uv", "venv", ".venv"], cwd=target, check=True)
         
-        print(f"=== DEPLOYMENT COMPLETE: {app_name} ===\n")
-
-    def install_suite(self, suite_name: str):
-        """Orchestrates installation of a named suite."""
-        if suite_name not in DG_SUITES:
-            print(f"[ERROR] Suite '{suite_name}' not defined in DG_app_manager.")
-            print(f"Available suites: {list(DG_SUITES.keys())}")
-            return
-
-        print(f"*******************************************")
-        print(f"*** STARTING SUITE INSTALL: {suite_name}")
-        print(f"*******************************************")
+        if (target / "requirements.txt").exists():
+            self.install_deps(target)
         
-        apps = DG_SUITES[suite_name]
-        for name, url in apps.items():
-            try:
-                self.deploy_app(name, url)
-            except Exception as e:
-                print(f"[CRITICAL] Failed to deploy {name}: {e}")
-                print("Continuing to next app in suite...")
-        
-        print(f"*******************************************")
-        print(f"*** SUITE INSTALL COMPLETE: {suite_name}")
-        print(f"*******************************************")
+        self.scan_app(target)
+        print(f"[SUCCESS] {name} deployed.")
 
-# ============================================================
-# CLI ENTRYPOINT
-# ============================================================
-
-def main():
-    if len(sys.argv) < 3:
-        print("Usage:")
-        print("  python3 DG_app_manager.py <app_name> <repo_url>")
-        print("  python3 DG_app_manager.py --suite <suite_name>")
-        return
-
-    # Determine location for managed apps (DG_vibecoder/apps_managed)
-    root = Path(__file__).resolve().parent.parent
-    apps_managed = root / "apps_managed"
-    apps_managed.mkdir(exist_ok=True)
-    
-    manager = AppManager(apps_managed)
-
-    arg1 = sys.argv[1]
-    arg2 = sys.argv[2]
-
-    if arg1 == "--suite":
-        manager.install_suite(arg2)
-    else:
-        # Standard mode: app_name, repo_url
-        manager.deploy_app(arg1, arg2)
+    def install_suite(self, suite):
+        if suite not in DG_SUITES: return print(f"[ERROR] Unknown suite: {suite}")
+        print(f"*** SUITE: {suite} ***")
+        for name, url in DG_SUITES[suite].items():
+            try: self.deploy(name, url)
+            except Exception as e: print(f"[FAIL] {name}: {e}")
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) < 3: sys.exit(1)
+    # Fix path logic to ensure apps_managed is in correct spot
+    root = Path(__file__).resolve().parent.parent / "apps_managed"
+    root.mkdir(exist_ok=True)
+    mgr = AppManager(root)
+    
+    if sys.argv[1] == "--suite": mgr.install_suite(sys.argv[2])
+    else: mgr.deploy(sys.argv[1], sys.argv[2])

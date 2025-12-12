@@ -1,5 +1,5 @@
 === OVERSEER SNAPSHOT ===
-generated=2025-12-12 02:00:14
+generated=2025-12-12 01:59:13
 target_folder=/home/seanf/workspace/deadlygraphics/ai/apps/DG_vibecoder/modules
 
 === FILES ===
@@ -806,30 +806,3 @@ if __name__ == "__main__":
 
 === SUMMARY ===
 total_files=4
-
-=== PATCHES (TO BE FILLED BY LLM) ===
-
-# Instructions:
-# - ChatGPT should ADD patch blocks in this file using the format:
-#
-# === PATCH START: relative/path/to/file.py ===
-# FIND:
-# old text
-# REPLACE:
-# new text
-# === PATCH END ===
-#
-# or:
-#
-# === PATCH START: relative/path/to/file.py ===
-# INSERT_AFTER:
-# line to match
-# INSERT_TEXT:
-# new text here
-# === PATCH END ===
-#
-# No changes are applied until you run:
-#   python3 DG_vibecoder.py overseer-implement
-#
-# You (the human) can paste the entire content of this file to ChatGPT,
-# then paste ChatGPT's updated content back into this same file.
