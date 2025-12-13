@@ -1,11 +1,11 @@
 ﻿#!/bin/bash
 set -e
 
-echo "💎 DIAMOND STACK PROVISIONING (BLOBS & SHARDS EDITION)..."
+echo "💎 DIAMOND STACK PROVISIONING (FINAL PRODUCTION v4)..."
 
 # --- 1. SETUP ENVIRONMENT & CACHE ---
-# We point HF_HOME to 'blobs_shards' so all raw downloads go to Windows
-# This prevents Linux drive bloat and allows apps to share downloaded weights
+# Point HF_HOME to Windows storage 'blobs_shards' to save Linux space
+# This allows AI-Toolkit and Musubi to share downloaded model weights
 export CACHE_DIR="/mnt/c/AI/models/blobs_shards"
 mkdir -p "\"
 
@@ -40,6 +40,7 @@ if [ ! -d "ComfyUI" ]; then
     cd ComfyUI
     python3 -m venv venv
     source venv/bin/activate
+    # We explicitly install dependencies here to ensure the venv is complete
     pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
     pip install -r requirements.txt
     deactivate
@@ -56,7 +57,6 @@ if [ ! -d "ai-toolkit" ]; then
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
     pip install -r requirements.txt
     deactivate
-    # Create the .env file for the token
     if [ ! -f .env ]; then
         echo "HF_TOKEN=" > .env
     fi
@@ -78,10 +78,10 @@ fi
 
 # D. Musubi Tuner (Wan 2.2 Golden Commit)
 if [ ! -d "musubi-tuner" ]; then
-    echo "Installing Musubi Tuner (Wan 2.2 Fixed)..."
+    echo "Installing Musubi Tuner (Wan 2.2 Pinned)..."
     git clone https://github.com/kohya-ss/musubi-tuner.git
     cd musubi-tuner
-    # Checkout the golden commit for Wan 2.2 stability
+    # PINNED COMMIT e7adb86 for Wan 2.2 stability
     git checkout e7adb86
     
     python3 -m venv venv
@@ -103,7 +103,7 @@ COMFY_CONFIG="\/ai/apps/ComfyUI/extra_model_paths.yaml"
 cat > "\" <<EOL
 comfyui:
     base_path: /mnt/c/AI/models
-    # Legacy Mappings (Matches C:\AI\models structure)
+    # Legacy Mappings (Matches your C:\AI\models structure)
     checkpoints: Stable-diffusion
     unet: diffusion_models
     vae: vae
