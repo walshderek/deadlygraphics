@@ -1,17 +1,16 @@
 ﻿#!/bin/bash
 set -e
 
-echo "💎 DIAMOND STACK PROVISIONING (LEGACY PATHS v3)..."
+echo "💎 DIAMOND STACK PROVISIONING (WAN 2.2 GOLDEN EDITION)..."
 
-# --- 1. SETUP ENVIRONMENT & CACHE (Crucial for AI-Toolkit) ---
-# This redirects the massive Hugging Face downloads to Windows
+# --- 1. SETUP ENVIRONMENT & CACHE ---
+# Redirect Hugging Face downloads to Windows to save space
 if ! grep -q "HF_HOME" ~/.bashrc; then
     echo '' >> ~/.bashrc
     echo '# Deadly Graphics Config' >> ~/.bashrc
     echo 'export HF_HOME="/mnt/c/AI/models/huggingface"' >> ~/.bashrc
     echo 'export WORKSPACE=~/workspace/deadlygraphics' >> ~/.bashrc
 fi
-# Export for this session immediately
 export HF_HOME="/mnt/c/AI/models/huggingface"
 
 # --- 2. PREPARE WORKSPACE ---
@@ -30,8 +29,9 @@ fi
 # --- 4. INSTALL APPS ---
 cd \/ai/apps
 
-# ComfyUI
+# A. ComfyUI
 if [ ! -d "ComfyUI" ]; then
+    echo "Installing ComfyUI..."
     git clone https://github.com/comfyanonymous/ComfyUI.git
     cd ComfyUI
     python3 -m venv venv
@@ -42,8 +42,9 @@ if [ ! -d "ComfyUI" ]; then
     cd ..
 fi
 
-# AI-Toolkit
+# B. AI-Toolkit
 if [ ! -d "ai-toolkit" ]; then
+    echo "Installing AI-Toolkit..."
     git clone https://github.com/ostris/ai-toolkit.git
     cd ai-toolkit
     python3 -m venv venv
@@ -51,15 +52,16 @@ if [ ! -d "ai-toolkit" ]; then
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
     pip install -r requirements.txt
     deactivate
-    # Create the .env file for the token (User must fill this)
+    # Create the .env file for the token
     if [ ! -f .env ]; then
         echo "HF_TOKEN=" > .env
     fi
     cd ..
 fi
 
-# OneTrainer
+# C. OneTrainer
 if [ ! -d "OneTrainer" ]; then
+    echo "Installing OneTrainer..."
     git clone https://github.com/Nerogar/OneTrainer.git
     cd OneTrainer
     python3 -m venv venv
@@ -70,19 +72,34 @@ if [ ! -d "OneTrainer" ]; then
     cd ..
 fi
 
+# D. Musubi Tuner (Wan 2.2 Golden Commit)
+if [ ! -d "musubi-tuner" ]; then
+    echo "Installing Musubi Tuner (Wan 2.2 Fixed)..."
+    git clone https://github.com/kohya-ss/musubi-tuner.git
+    cd musubi-tuner
+    # Checkout the golden commit for Wan 2.2 stability
+    git checkout e7adb86
+    
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -e .
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+    deactivate
+    cd ..
+fi
+
 # --- 5. CONFIGURATION & LINKING ---
 # Link the Windows Model Library
 if [ ! -L "\/ai/models" ]; then
     ln -s /mnt/c/AI/models \/ai/models
 fi
 
-# GENERATE COMFYUI CONFIG (The Legacy Fix)
-# We force ComfyUI to look in your OLD folders (Stable-diffusion)
+# GENERATE COMFYUI CONFIG (Legacy Folder Fix)
 COMFY_CONFIG="\/ai/apps/ComfyUI/extra_model_paths.yaml"
 cat > "\" <<EOL
 comfyui:
     base_path: /mnt/c/AI/models
-    # Legacy Mappings (Matches your C:\AI\models structure)
+    # Legacy Mappings (Matches C:\AI\models structure)
     checkpoints: Stable-diffusion
     unet: diffusion_models
     vae: vae
