@@ -1,17 +1,21 @@
 ﻿#!/bin/bash
 set -e
 
-echo "💎 DIAMOND STACK PROVISIONING (WAN 2.2 GOLDEN EDITION)..."
+echo "💎 DIAMOND STACK PROVISIONING (BLOBS & SHARDS EDITION)..."
 
 # --- 1. SETUP ENVIRONMENT & CACHE ---
-# Redirect Hugging Face downloads to Windows to save space
+# We point HF_HOME to 'blobs_shards' so all raw downloads go to Windows
+# This prevents Linux drive bloat and allows apps to share downloaded weights
+export CACHE_DIR="/mnt/c/AI/models/blobs_shards"
+mkdir -p "\"
+
 if ! grep -q "HF_HOME" ~/.bashrc; then
     echo '' >> ~/.bashrc
     echo '# Deadly Graphics Config' >> ~/.bashrc
-    echo 'export HF_HOME="/mnt/c/AI/models/huggingface"' >> ~/.bashrc
+    echo "export HF_HOME=\"\\"" >> ~/.bashrc
     echo 'export WORKSPACE=~/workspace/deadlygraphics' >> ~/.bashrc
 fi
-export HF_HOME="/mnt/c/AI/models/huggingface"
+export HF_HOME="\"
 
 # --- 2. PREPARE WORKSPACE ---
 export WORKSPACE=~/workspace/deadlygraphics
