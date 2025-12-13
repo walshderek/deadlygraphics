@@ -6,8 +6,17 @@ This is the living document for the framework's development.
 - [ ] **Repo Sync:** Re-install DG apps from the official \deadlygraphics\ repo (currently running generic clones).
 - [ ] **Directory Migration:** Move the AI stack from \~/Diamond-Stack\ to the canonical path: 
   \/home/seanf/workspace/deadlygraphics/ai/apps/\.
-- [ ] **Model Pathing:** Configure \extra_model_paths.yaml\ (and equivalent for training) to point to the Windows storage: 
-  \/mnt/c/AI/models/\ (mapped from \C:\AI\models\).
+- [ ] **Global Environment Config:**
+    - [ ] Add \export HF_HOME="/mnt/c/AI/models/huggingface"\ to \.bashrc\.
+    - [ ] Create \/mnt/c/AI/models/huggingface\ directory on Windows side.
+- [ ] **App Specific Config:**
+    - [ ] **AI-Toolkit:** Create \.env\ file with \HF_TOKEN\.
+    - [ ] **ComfyUI:** Rename \extra_model_paths.yaml.example\ to \extra_model_paths.yaml\ and set \ase_path: /mnt/c/AI/models\.
+
+## ✅ COMPLETED / VERIFIED
+- [x] **ComfyUI Launch:** Verified working on RTX 4080 (Port 8188).
+- [x] **AI-Toolkit Launch:** Verified CLI entry point works without CUDA errors.
+- [x] **Docs:** Established README, MANIFESTO, ROADMAP, and CONFIGURATION standards.
 
 ## 🚨 Immediate Priorities (Grant Deadline)
 - [ ] **Grant Application:** Finalize "Innovate UK Creative Catalyst" pitch (Deadline: Jan 2026).
