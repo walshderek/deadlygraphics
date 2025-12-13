@@ -2,7 +2,14 @@
 
 This is the living document for the framework's development.
 
-## 🚨 Immediate Priorities (Next 2 Weeks)
+## 🚨 CRITICAL ARCHITECTURE FIXES (Immediate Action)
+- [ ] **Repo Sync:** Re-install DG apps from the official \deadlygraphics\ repo (currently running generic clones).
+- [ ] **Directory Migration:** Move the AI stack from \~/Diamond-Stack\ to the canonical path: 
+  \/home/seanf/workspace/deadlygraphics/ai/apps/\.
+- [ ] **Model Pathing:** Configure \extra_model_paths.yaml\ (and equivalent for training) to point to the Windows storage: 
+  \/mnt/c/AI/models/\ (mapped from \C:\AI\models\).
+
+## 🚨 Immediate Priorities (Grant Deadline)
 - [ ] **Grant Application:** Finalize "Innovate UK Creative Catalyst" pitch (Deadline: Jan 2026).
 - [ ] **Visual Proof:** Generate 3 "Hero Images" using ComfyUI (The Patron, The Studio, The Contract).
 - [ ] **Legal Scaffold:** Draft the "£10 Investor" contract logic using AI for human review.
