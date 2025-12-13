@@ -42,21 +42,21 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 wsl --import $DistroName $InstallDir $TarFile
 
 # ---------------------------------------------------------
-# 4. Create Linux user (SAFE: external bash script)
+# 4. Create Linux user (NO INLINE BASH VARIABLES)
 # ---------------------------------------------------------
 $TmpScript = "$env:TEMP\dg_user_setup.sh"
 
 @"
 set -e
 
-useradd -m -s /bin/bash $LinuxUser || true
-echo '$LinuxUser:$TempPass' | chpasswd
-usermod -aG sudo $LinuxUser
+useradd -m -s /bin/bash seanf || true
+echo 'seanf:diamond' | chpasswd
+usermod -aG sudo seanf
 
-echo '$LinuxUser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/$LinuxUser
-chmod 0440 /etc/sudoers.d/$LinuxUser
+echo 'seanf ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/seanf
+chmod 0440 /etc/sudoers.d/seanf
 
-printf "[user]\ndefault=$LinuxUser\n" > /etc/wsl.conf
+printf "[user]\ndefault=seanf\n" > /etc/wsl.conf
 "@ | Set-Content -Encoding UTF8 $TmpScript
 
 wsl -d $DistroName -u root -- bash /mnt/c/Users/$env:USERNAME/AppData/Local/Temp/dg_user_setup.sh
@@ -71,7 +71,7 @@ wsl -d $DistroName -- nvidia-smi
 # ---------------------------------------------------------
 # 6. Clone repo
 # ---------------------------------------------------------
-wsl -d $DistroName -u $LinuxUser -- bash -c "
+wsl -d $DistroName -u seanf -- bash -c "
 set -e
 mkdir -p ~/workspace
 cd ~/workspace
@@ -79,9 +79,9 @@ git clone $RepoUrl deadlygraphics
 "
 
 # ---------------------------------------------------------
-# 7. Provision stack (venvs, CUDA, Torch)
+# 7. Provision stack
 # ---------------------------------------------------------
-wsl -d $DistroName -u $LinuxUser -- bash -c "
+wsl -d $DistroName -u seanf -- bash -c "
 set -e
 cd ~/workspace/deadlygraphics
 chmod +x provision_stack.sh
