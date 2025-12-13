@@ -1,13 +1,13 @@
 ﻿# The Ethical Arts Council Manifesto
 
 ## The Problem
-The current funding model for British independent film is broken. Creators rely on donations (Kickstarter) with zero return for the donor, or massive studio funding that strips away creative rights.
+The current production model for independent film often forces a compromise between visual fidelity and creative control. High-end visuals typically require massive studio infrastructure, which dilutes the original vision.
 
 ## The Vision
-Deadly Graphics proposes a "Micro-Patronage" model:
-1.  **Investment, Not Donation:** A £10 contribution is an investment. If the project succeeds, the investor sees a return, verified by smart contracts.
-2.  **The "1p" Principle:** Even a penny of profit share validates the supporter's belief in the art. It changes the relationship from "charity" to "partnership."
-3.  **Pro-Bono Legal Verification:** We utilize AI to scaffold legal contracts, which are then reviewed by human legal professionals paid via the project's funding. This ensures compliance without the crushing upfront costs of traditional media law.
+Deadly Graphics proposes a "Sovereign Creator" model:
+1.  **Local Control:** We prioritize local, offline AI stacks (Diamond Stack) over cloud APIs to ensure no third party can pull the plug on a project.
+2.  **AI as Crew:** We utilize AI not to replace the artist, but to act as a virtual crew, allowing a single director to execute a vision that previously required hundreds of people.
+3.  **Ethical Fidelity:** We commit to the "Deadly" standard—using AI to enhance and polish, ensuring the output meets the highest definitions of visual excellence.
 
 ## The Goal
-To create a self-sustaining loop where British audiences fund British talent, and share in the financial success of the work they support.
+To create a self-sustaining studio where British talent can produce world-class animation and visual effects without leaving the country or selling out their IP.
