@@ -1,0 +1,32 @@
+# Python virtual environments
+venv/
+env/
+ENV/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Large binaries and archives
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+*.exe
+*.msi
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
