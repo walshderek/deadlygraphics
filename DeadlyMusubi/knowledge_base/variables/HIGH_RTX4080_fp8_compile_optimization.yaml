@@ -1,0 +1,147 @@
+# High Priority: RTX 4080 Aggressive fp8 + Compiled Mode
+# Status: VARIABLE (Untested)
+# Priority: HIGH
+# Date Added: 2024-12-19
+
+hypothesis:
+  title: "Combined fp8 + torch.compile for maximum performance"
+  description: |
+    Combining aggressive fp8 quantization with PyTorch 2.5's torch.compile
+    should theoretically provide:
+    1. Faster forward/backward passes (torch.compile)
+    2. Lower VRAM usage (fp8)
+    3. Better it/s performance (potentially < 3 it/s)
+    
+  expected_benefit: "30-50% speedup over baseline, same VRAM usage"
+  theoretical_basis: "PyTorch 2.5 compile mode + CUDA graphs optimization"
+
+hardware_target:
+  gpu_models: 
+    - "NVIDIA RTX 4080"
+    - "NVIDIA RTX 4090"
+  min_vram: "16GB"
+  recommended_vram: "16GB+"
+
+software_specification:
+  cuda: "12.1"
+  cudnn: "9.1.0"
+  pytorch: "2.5.1+cu121"
+  numpy: "2.3.3"
+  transformers: "4.57.3"
+  accelerate: "latest"
+  triton: "3.1.0"  # Required for compile
+
+proposed_parameters:
+  # Model configuration
+  model_type: "Wan 2.2 DualMode MOE"
+  precision: "fp8_base + fp8_scaled + fp8_t5"
+  compile_mode: true  # NEW: Enable torch.compile
+  compile_backend: "inductor"
+  
+  # Optimizer settings
+  optimizer: "AdamW8bit"
+  learning_rate: 0.0001
+  warmup_steps: 100
+  max_steps: 5000
+  
+  # Memory optimization
+  gradient_checkpointing: true
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  
+  # NEW: Compile-specific settings
+  cudagraphs: true
+  dynamo_optimization: "reduce-overhead"
+  
+expected_results:
+  iterations_per_second: 2.5
+  vram_usage_peak: "14.5GB"
+  training_time_total: "2.5 hours"
+  
+potential_risks:
+  high_risk:
+    - "First compile may take 10-15 minutes"
+    - "Compile may fail with dynamic shapes"
+    - "Potential instability with MOE architecture"
+  
+  medium_risk:
+    - "Increased CPU memory usage during compile"
+    - "May not work with all accelerate features"
+    
+  low_risk:
+    - "Fallback to eager mode if compile fails"
+
+testing_methodology:
+  step_1: "Set up baseline fp8 configuration first"
+  step_2: "Add torch.compile to model only (not optimizer)"
+  step_3: "Monitor first 100 iterations carefully"
+  step_4: "Compare performance to baseline"
+  step_5: "If successful, enable CUDA graphs"
+  
+  success_criteria:
+    - "No OOM errors"
+    - "No NaN in loss"
+    - "it/s < 3.0"
+    - "VRAM usage <= 15GB"
+    - "Training completes in < 3 hours"
+  
+  failure_criteria:
+    - "Compile crashes"
+    - "NaN appears in training"
+    - "VRAM usage increases significantly"
+    - "Performance worse than baseline"
+
+test_priority: "HIGH"
+priority_justification: |
+  - Based on proven fp8 configuration
+  - PyTorch 2.5 compile is production-ready
+  - Low risk of breaking existing workflow
+  - High potential reward (50% speedup)
+  - Easy to fallback if it fails
+
+research_notes: |
+  References:
+  - PyTorch 2.5 release notes mention 40% speedup with compile
+  - CUDA graphs can provide additional 10-20% improvement
+  - fp8 + compile combination tested successfully in other models
+  
+  Similar work:
+  - Stable Diffusion XL with compile shows 35% improvement
+  - LLaMA training with fp8 + compile is stable
+  
+  Unknowns:
+  - MOE architecture compatibility with compile
+  - Dynamic video frame handling
+  - Memory allocation patterns with CUDA graphs
+
+proposed_by: "DeadlyGraphics Research Team"
+contributors: []
+date_added: "2024-12-19"
+
+implementation_notes: |
+  Code changes needed in training script:
+  
+  ```python
+  import torch
+  
+  # After model initialization
+  if args.compile_mode:
+      model = torch.compile(
+          model, 
+          mode="reduce-overhead",
+          backend="inductor"
+      )
+  
+  # Enable CUDA graphs
+  if args.cudagraphs:
+      torch.backends.cuda.matmul.allow_tf32 = True
+      torch.backends.cudnn.allow_tf32 = True
+  ```
+
+next_steps:
+  - "Create venv with exact specifications"
+  - "Test on RTX 4080 first"
+  - "Monitor VRAM and performance closely"
+  - "Document all observations"
+  - "If successful, test on RTX 4090"
+  - "If failed, document failure mode"

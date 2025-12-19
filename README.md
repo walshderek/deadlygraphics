@@ -19,12 +19,14 @@ We operate on a custom high-performance Linux (WSL2) environment running on NVID
 * **OneTrainer:** Fine-tuning base models for consistent character/style LoRAs.
 * **AI-Toolkit:** Rapid training for flux-based assets.
 * **Musubi Tuner (Wan 2.2):** Specialized video model training pipeline.
+* **DeadlyMusubi:** Optimized Musubi Tuner deployment for consumer GPUs with OOM/NaN mitigation.
 
 ## Documentation
 * [Installation Guide](docs/INSTALLATION.md) - How to build the Deadly Graphics production rig.
 * [The Manifesto](docs/MANIFESTO.md) - Our operational philosophy.
 * [Configuration Standards](docs/CONFIGURATION.md) - Pathing and environment rules.
 * [Roadmap & Tasks](docs/ROADMAP.md) - The master list of development.
+* [DeadlyMusubi](DeadlyMusubi/README.md) - Optimized Musubi Tuner for RTX 3000/4000 series GPUs.
 
 ## License
 Proprietary / TBD
