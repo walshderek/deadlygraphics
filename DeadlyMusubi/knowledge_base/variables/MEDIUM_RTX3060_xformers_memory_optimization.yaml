@@ -1,0 +1,112 @@
+# Medium Priority: RTX 3060 Ti Memory-Optimized + XFormers
+# Status: VARIABLE (Untested)
+# Priority: MEDIUM
+# Date Added: 2024-12-19
+
+hypothesis:
+  title: "XFormers attention optimization for 12GB cards"
+  description: |
+    Using XFormers for memory-efficient attention could allow:
+    1. Reduced VRAM usage during attention computation
+    2. Potential for slightly higher resolution training
+    3. Better performance on 12GB cards
+    
+  expected_benefit: "10-15% VRAM reduction, enabling 256x256 on RTX 3060"
+  theoretical_basis: "XFormers proven effective in Stable Diffusion on low VRAM"
+
+hardware_target:
+  gpu_models: 
+    - "NVIDIA RTX 3060"
+    - "NVIDIA RTX 3060 Ti"
+  min_vram: "12GB"
+  recommended_vram: "12GB"
+
+software_specification:
+  cuda: "12.1"
+  cudnn: "9.1.0"
+  pytorch: "2.5.1+cu121"
+  numpy: "2.3.3"
+  transformers: "4.57.3"
+  xformers: "0.0.23"
+  accelerate: "latest"
+
+proposed_parameters:
+  # Model configuration
+  model_type: "Wan 2.2 DualMode MOE"
+  precision: "fp8_base + fp8_scaled + fp8_t5"
+  enable_xformers: true  # NEW: Memory-efficient attention
+  
+  # Optimizer settings
+  optimizer: "AdamW8bit"
+  learning_rate: 0.0001
+  warmup_steps: 100
+  max_steps: 5000
+  
+  # Memory optimization
+  gradient_checkpointing: true
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  
+  # Dataset
+  resolution: "256x256"
+  num_frames: 24
+
+expected_results:
+  iterations_per_second: 4.5
+  vram_usage_peak: "11.8GB"
+  training_time_total: "3.8 hours"
+
+potential_risks:
+  high_risk:
+    - "XFormers may not be compatible with MOE architecture"
+    - "Installation can be tricky on some systems"
+  
+  medium_risk:
+    - "Possible performance regression on some operations"
+    - "May require specific PyTorch version"
+    
+  low_risk:
+    - "Can disable if causes issues"
+
+testing_methodology:
+  step_1: "Install xformers compatible with PyTorch 2.5.1"
+  step_2: "Test on baseline fp8 configuration first"
+  step_3: "Monitor VRAM usage with and without xformers"
+  step_4: "Compare training speed"
+  step_5: "Verify output quality"
+  
+  success_criteria:
+    - "VRAM usage < 12GB"
+    - "No crashes or errors"
+    - "Training completes successfully"
+    - "Output quality comparable to baseline"
+
+test_priority: "MEDIUM"
+priority_justification: |
+  - XFormers is proven technology
+  - Low risk to test
+  - Could significantly help 12GB users
+  - Easy to disable if problematic
+
+installation_notes: |
+  ```bash
+  # Install xformers
+  pip install xformers==0.0.23 --index-url https://download.pytorch.org/whl/cu121
+  
+  # Or build from source for latest
+  pip install -v -U git+https://github.com/facebookresearch/xformers.git@main#egg=xformers
+  ```
+
+proposed_by: "DeadlyGraphics Research Team"
+date_added: "2024-12-19"
+
+related_work:
+  - "Stable Diffusion uses XFormers on 8GB cards"
+  - "ComfyUI implements XFormers successfully"
+  - "Some diffusion transformers benefit from XFormers"
+
+next_steps:
+  - "Test XFormers installation on target hardware"
+  - "Verify compatibility with Wan 2.2 architecture"
+  - "Benchmark VRAM usage"
+  - "Document results"

@@ -1,0 +1,144 @@
+# Low Priority: RTX 4090 Extreme Performance
+# Status: VARIABLE (Experimental)
+# Priority: LOW
+# Date Added: 2024-12-19
+
+hypothesis:
+  title: "Push RTX 4090 to absolute limits for sub-2hr training"
+  description: |
+    Combining all performance optimizations on RTX 4090:
+    1. torch.compile with inductor backend
+    2. CUDA graphs
+    3. Larger effective batch size
+    4. TensorFloat-32 (TF32) precision
+    5. Flash Attention 2
+    
+  expected_benefit: "Training time < 2 hours (vs 3.5hr baseline)"
+  theoretical_basis: "RTX 4090 has headroom for aggressive optimization"
+
+hardware_target:
+  gpu_models: 
+    - "NVIDIA RTX 4090"
+  min_vram: "24GB"
+  required: "RTX 4090 specifically"
+
+software_specification:
+  cuda: "12.1"
+  cudnn: "9.1.0"
+  pytorch: "2.5.1+cu121"
+  numpy: "2.3.3"
+  transformers: "4.57.3"
+  triton: "3.1.0"
+  flash_attn: "2.5.0"
+  accelerate: "latest"
+
+proposed_parameters:
+  # Model configuration
+  model_type: "Wan 2.2 DualMode MOE"
+  precision: "tf32"  # TensorFloat-32 for speed
+  compile_mode: true
+  compile_backend: "inductor"
+  cudagraphs: true
+  flash_attention: true
+  
+  # Optimizer settings
+  optimizer: "AdamW"  # Full precision on 4090
+  learning_rate: 0.0002  # Higher LR with larger batch
+  warmup_steps: 200
+  max_steps: 5000
+  
+  # Performance optimization
+  gradient_checkpointing: false  # Disable for speed
+  batch_size: 2  # Possible on 24GB
+  gradient_accumulation_steps: 4  # Effective batch = 8
+  
+  # Dataset
+  resolution: "256x256"
+  num_frames: 24
+
+expected_results:
+  iterations_per_second: 1.5
+  vram_usage_peak: "22GB"
+  training_time_total: "1.8 hours"
+
+potential_risks:
+  high_risk:
+    - "High complexity - multiple points of failure"
+    - "May be unstable with all optimizations combined"
+    - "Compile time could offset speed gains"
+    - "Flash Attention may not work with MOE"
+  
+  medium_risk:
+    - "Higher learning rate may cause NaN"
+    - "Larger batch size changes training dynamics"
+    
+  low_risk:
+    - "Can fall back to simpler config"
+
+testing_methodology:
+  step_1: "Start with baseline 4090 config"
+  step_2: "Add one optimization at a time"
+  step_3: "Benchmark each addition"
+  step_4: "Monitor for instability"
+  step_5: "Document performance at each step"
+  
+  incremental_testing:
+    - "Baseline (bf16 + AdamW)"
+    - "+ TF32 precision"
+    - "+ torch.compile"
+    - "+ CUDA graphs"
+    - "+ Flash Attention"
+    - "+ Larger batch"
+  
+  success_criteria:
+    - "Training completes without NaN"
+    - "VRAM usage < 24GB"
+    - "Total time < 2 hours"
+    - "Output quality maintained"
+
+test_priority: "LOW"
+priority_justification: |
+  - Only applicable to RTX 4090 owners
+  - High complexity, high risk
+  - Baseline already meets goals
+  - More of a "how fast can we go" experiment
+
+research_notes: |
+  Each optimization impact estimate:
+  - TF32: +15% speed, no VRAM change
+  - torch.compile: +30% speed, +5% VRAM
+  - CUDA graphs: +10% speed, +2% VRAM
+  - Flash Attention: +20% speed, -10% VRAM
+  - Larger batch: Variable speed, +40% VRAM
+  
+  Combined: ~75% faster if all work together (unlikely)
+  Realistic: 50-60% faster (2-2.5hr training)
+
+warnings: |
+  - This is an extreme configuration
+  - Not recommended for production use
+  - Primarily for research/benchmarking
+  - Fall back to baseline if any issues
+  - Test on non-critical datasets first
+
+proposed_by: "DeadlyGraphics Research Team"
+date_added: "2024-12-19"
+
+implementation_code: |
+  ```python
+  # Enable TF32
+  torch.backends.cuda.matmul.allow_tf32 = True
+  torch.backends.cudnn.allow_tf32 = True
+  
+  # Compile model
+  model = torch.compile(model, mode="max-autotune")
+  
+  # Flash Attention (if supported)
+  from flash_attn import flash_attn_func
+  ```
+
+next_steps:
+  - "Test each optimization individually"
+  - "Measure actual speedup vs theoretical"
+  - "Document any breaking combinations"
+  - "Create fallback configurations"

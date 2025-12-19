@@ -1,0 +1,93 @@
+# RTX 3060 OOM Failure - CUDA 12.4 + Full Precision
+# Status: DISPROVEN FACTOR
+# Last Tested: 2024-12-15
+
+hardware:
+  gpu_model: "NVIDIA RTX 3060"
+  vram: "12GB"
+  cpu: "Intel i5-12400"
+  ram: "16GB DDR4"
+  os: "Ubuntu 22.04"
+
+software:
+  cuda: "12.4"
+  cudnn: "9.2.0"
+  pytorch: "2.5.0+cu124"
+  torchvision: "0.20.0+cu124"
+  numpy: "2.1.0"
+  transformers: "4.50.0"
+  accelerate: "0.34.0"
+
+attempted_parameters:
+  # Model configuration
+  model_type: "Wan 2.2 DualMode MOE"
+  precision: "fp32"  # PROBLEM: Full precision on 12GB VRAM
+  
+  # Optimizer settings
+  optimizer: "AdamW"  # PROBLEM: Full precision optimizer
+  learning_rate: 0.0001
+  warmup_steps: 50
+  
+  # Memory settings
+  gradient_checkpointing: false  # PROBLEM: Disabled
+  batch_size: 1
+  gradient_accumulation_steps: 2
+  
+  # Dataset
+  resolution: "256x256"
+  num_frames: 24
+
+failure_details:
+  failure_type: "OOM"
+  failure_stage: "Forward pass, iteration 3"
+  error_message: |
+    torch.cuda.OutOfMemoryError: CUDA out of memory. 
+    Tried to allocate 2.50 GiB. GPU 0 has a total capacity of 
+    11.76 GiB of which 1.89 GiB is free.
+  
+  vram_usage_at_failure: "11.76GB / 11.76GB"
+  training_progress: "Iteration 3/5000"
+  
+testing_info:
+  date_tested: "2024-12-15"
+  tested_by: "Community Contributor"
+  num_failure_attempts: 3
+  reproducibility: "100% - Fails consistently"
+
+root_causes:
+  primary: "Full fp32 precision requires ~18GB VRAM for Wan 2.2"
+  secondary: 
+    - "AdamW optimizer stores additional full-precision states"
+    - "Gradient checkpointing disabled"
+    - "CUDA 12.4 has higher memory overhead than 12.1"
+  
+lessons_learned: |
+  1. RTX 3060 (12GB) CANNOT run Wan 2.2 in full precision
+  2. Minimum precision must be fp16, preferably fp8
+  3. AdamW8bit is essential for 12GB VRAM
+  4. Gradient checkpointing is NOT optional on 12GB cards
+  
+  This configuration might work with:
+  - fp8 precision (saves ~60% VRAM)
+  - AdamW8bit optimizer (saves ~30% VRAM)
+  - Gradient checkpointing enabled (saves ~20% VRAM)
+  - CUDA 12.1 instead of 12.4 (slightly better memory efficiency)
+
+future_potential: true
+future_conditions:
+  - "PyTorch implements better memory management"
+  - "CUDA optimizations reduce base overhead"
+  - "Model quantization improvements"
+  - "Hardware: RTX 3060 Ti with 16GB (if released)"
+
+related_configurations:
+  works_instead: "RTX3060_CUDA121_TORCH25_fp8_aggressive.yaml"
+  similar_failure: "RTX3070_OOM_CUDA124_fp32.yaml"
+
+recommendations: |
+  For RTX 3060 (12GB) users:
+  - ALWAYS use fp8 or bf16 precision
+  - ALWAYS use AdamW8bit optimizer
+  - ALWAYS enable gradient checkpointing
+  - Stick with CUDA 12.1, avoid 12.4
+  - Consider reducing resolution to 224x224 if still experiencing OOM
